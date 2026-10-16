@@ -9,6 +9,10 @@ export interface AppConfig {
   chainId: number;
   fixtureSeed: string;
   fixtureAutomineMs: number;
+  fixtureInitialBlocks: number;
+  /** Optional JSON file with a watchlist; the built-in synthetic one is used when unset. */
+  watchlistFile: string | null;
+  consumerName: string;
   startBlock: number;
   batchSize: number;
   confirmationDepth: number;
@@ -100,6 +104,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     chainId: int('CHAIN_ID', 31337, 1),
     fixtureSeed: text('FIXTURE_SEED', 'cers-demo'),
     fixtureAutomineMs: int('FIXTURE_AUTOMINE_MS', 0, 0, 3_600_000),
+    fixtureInitialBlocks: int('FIXTURE_INITIAL_BLOCKS', 30, 0, 100_000),
+    watchlistFile: env.WATCHLIST_FILE?.trim() || null,
+    consumerName: text('CONSUMER_NAME', 'consumer-1'),
     startBlock: int('START_BLOCK', 0, 0),
     batchSize: int('BATCH_SIZE', 20, 1, 1_000),
     confirmationDepth,

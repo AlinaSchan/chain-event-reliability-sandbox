@@ -18,3 +18,18 @@ export function findScenario(id: string): ScenarioDefinition | undefined {
 export const SCENARIO_IDS: readonly ScenarioId[] = SCENARIOS.map((s) => s.id);
 
 export { runScenario, persistResult } from './runner.js';
+
+/** The part of a definition that is documentation: what the API serves under GET /scenarios. */
+export function toCatalog(def: ScenarioDefinition) {
+  return {
+    id: def.id,
+    title: def.title,
+    summary: def.summary,
+    fixture: def.fixture,
+    faults: def.faults,
+    expected: def.expected,
+    acceptance: def.acceptance,
+    requires: def.requires,
+    checks: def.checks,
+  };
+}

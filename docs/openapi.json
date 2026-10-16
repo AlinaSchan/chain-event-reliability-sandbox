@@ -1,0 +1,903 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Chain Event Reliability Sandbox API",
+    "version": "0.1.0",
+    "description": "Local, read-mostly API over the sandbox's durable state. All data is synthetic. Admin and fault-injection routes (tag \"admin\") exist only when ADMIN_ENABLED=true and are refused on non-loopback addresses."
+  },
+  "components": {
+    "securitySchemes": {
+      "adminBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {}
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Liveness and dependency reachability",
+        "tags": [
+          "system"
+        ],
+        "description": "Returns 200 when PostgreSQL answers, 503 otherwise. Redis being down is reported but does not make the process unhealthy: events and checkpoints do not depend on it.",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "status",
+                    "postgres",
+                    "redis"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "degraded"
+                      ]
+                    },
+                    "postgres": {
+                      "type": "string",
+                      "enum": [
+                        "up"
+                      ]
+                    },
+                    "redis": {
+                      "type": "string",
+                      "enum": [
+                        "up",
+                        "down",
+                        "disabled"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "status",
+                    "postgres",
+                    "redis"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "down"
+                      ]
+                    },
+                    "postgres": {
+                      "type": "string",
+                      "enum": [
+                        "down"
+                      ]
+                    },
+                    "redis": {
+                      "type": "string",
+                      "enum": [
+                        "up",
+                        "down",
+                        "disabled"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status": {
+      "get": {
+        "summary": "Chain head, durable checkpoint, confirmation policy, counts, outbox and recovery state",
+        "tags": [
+          "system"
+        ],
+        "description": "Everything needed to judge whether the service is keeping up and what it last had to repair. `?verify=true` additionally re-derives the stored-state invariants (reads every event; use it for checks, not for polling).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "in": "query",
+            "name": "verify",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Prometheus text exposition",
+        "tags": [
+          "system"
+        ],
+        "description": "State gauges read from PostgreSQL plus counters of what this process has done. There is deliberately no uptime and no throughput metric.",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "summary": "List events, newest first",
+        "tags": [
+          "events"
+        ],
+        "description": "`status=canonical` means provisional or confirmed. Pagination is keyset-based: pass `nextCursor` back as `cursor`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "provisional",
+                "confirmed",
+                "orphaned",
+                "canonical"
+              ]
+            },
+            "in": "query",
+            "name": "status",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "erc20_transfer",
+                "settlement_recorded"
+              ]
+            },
+            "in": "query",
+            "name": "kind",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "in": "query",
+            "name": "fromBlock",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "in": "query",
+            "name": "toBlock",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 50
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": true,
+                        "required": [
+                          "eventId",
+                          "status",
+                          "kind",
+                          "blockNumber",
+                          "amountUnits"
+                        ],
+                        "properties": {
+                          "eventId": {
+                            "type": "string",
+                            "description": "`chainId:blockHash:transactionHash:logIndex`"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "provisional",
+                              "confirmed",
+                              "orphaned"
+                            ]
+                          },
+                          "statusReason": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "erc20_transfer",
+                              "settlement_recorded"
+                            ]
+                          },
+                          "contract": {
+                            "type": "string"
+                          },
+                          "symbol": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "blockNumber": {
+                            "type": "integer"
+                          },
+                          "blockHash": {
+                            "type": "string"
+                          },
+                          "transactionHash": {
+                            "type": "string"
+                          },
+                          "logIndex": {
+                            "type": "integer"
+                          },
+                          "amountUnits": {
+                            "type": "string",
+                            "description": "Exact amount in base units (decimal string)."
+                          },
+                          "amount": {
+                            "type": [
+                              "null",
+                              "string"
+                            ],
+                            "description": "The same amount in whole token units, exact."
+                          },
+                          "decoded": {
+                            "type": "object",
+                            "additionalProperties": true
+                          },
+                          "alertStatus": {
+                            "type": [
+                              "null",
+                              "string"
+                            ],
+                            "enum": [
+                              "open",
+                              "withdrawn",
+                              null
+                            ]
+                          },
+                          "confirmCount": {
+                            "type": "integer"
+                          },
+                          "seenCount": {
+                            "type": "integer",
+                            "description": "Sightings of this identity; more than 1 means it was delivered more than once."
+                          }
+                        }
+                      }
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events/{id}": {
+      "get": {
+        "summary": "One event with its audit trail, notifications and deliveries",
+        "tags": [
+          "events"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+:0x[0-9a-f]{64}:0x[0-9a-f]{64}:[0-9]+$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "statusCode": {
+                      "type": "integer"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/alerts": {
+      "get": {
+        "summary": "High-value alerts and the state of their notifications",
+        "tags": [
+          "events"
+        ],
+        "description": "An alert is open while its event is canonical and withdrawn once the event is orphaned. `notification` is the latest confirmation notification for the event, if any: alerts for provisional events have none.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "withdrawn"
+              ]
+            },
+            "in": "query",
+            "name": "status",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scenarios": {
+      "get": {
+        "summary": "The failure scenarios S01-S09, with the verdict of the last recorded run of each",
+        "tags": [
+          "scenarios"
+        ],
+        "description": "Runs are recorded by `npm run scenarios`. A scenario that has never been run, or was skipped, is reported as such - never as passed.",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scenarios/{id}": {
+      "get": {
+        "summary": "One scenario: fixture, injected faults, expected behavior, acceptance criterion, and the evidence of its last run",
+        "tags": [
+          "scenarios"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^S0[1-9]$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "statusCode": {
+                      "type": "integer"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/fixture/mine": {
+      "post": {
+        "summary": "Mine fixture blocks (seeded traffic)",
+        "tags": [
+          "admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "blocks"
+                ],
+                "properties": {
+                  "blocks": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/fixture/reorg": {
+      "post": {
+        "summary": "Replace the last `depth` blocks with a competing branch of `replacement` blocks",
+        "tags": [
+          "admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "depth",
+                  "replacement",
+                  "branch"
+                ],
+                "properties": {
+                  "depth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500
+                  },
+                  "replacement": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 500
+                  },
+                  "branch": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/fixture/notifier": {
+      "post": {
+        "summary": "Drop or restore the simulated WebSocket head-notification stream",
+        "tags": [
+          "admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "action"
+                ],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "disconnect",
+                      "reconnect"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/fixture/faults": {
+      "post": {
+        "summary": "Schedule an RPC fault on the fixture provider (fires by call count)",
+        "tags": [
+          "admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "method",
+                  "action",
+                  "times"
+                ],
+                "properties": {
+                  "method": {
+                    "type": "string",
+                    "enum": [
+                      "*",
+                      "getHead",
+                      "getHeader",
+                      "getLogs"
+                    ]
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "timeout",
+                      "server_error",
+                      "stale",
+                      "duplicate_logs",
+                      "lagging"
+                    ]
+                  },
+                  "times": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000
+                  },
+                  "skip": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "lagBlocks": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Clear all scheduled provider faults",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/scanner/scan": {
+      "post": {
+        "summary": "Run one scan cycle now and return its report",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/scanner/unhalt": {
+      "post": {
+        "summary": "Clear a halt after the cause has been dealt with (resolves the halt incident, records the note)",
+        "tags": [
+          "admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "note"
+                ],
+                "properties": {
+                  "note": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "system",
+      "description": "Health, status and metrics"
+    },
+    {
+      "name": "events",
+      "description": "Events and alerts"
+    },
+    {
+      "name": "scenarios",
+      "description": "Failure scenarios S01-S09 and their last recorded runs"
+    },
+    {
+      "name": "admin",
+      "description": "Fixture control and operator actions (disabled by default)"
+    }
+  ]
+}

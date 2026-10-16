@@ -66,6 +66,8 @@ export interface ScenarioResult {
 /** Receives the narration of a run. The demo prints it; tests pass none. */
 export interface Narrator {
   stage(stage: Stage, text: string): void;
+  /** Structured log lines produced since the previous call, filtered to the ones that show recovery at work. */
+  logs(lines: Array<Record<string, Json>>): void;
   note(text: string, data?: Json): void;
   table(title: string, rows: Array<Record<string, Json>>): void;
   check(result: CheckResult): void;

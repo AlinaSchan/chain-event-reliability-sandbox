@@ -263,7 +263,7 @@ export class Scanner {
 
     const from = cp.lastBlockNumber + 1;
     const to = Math.min(head.number, from + this.cfg.batchSize - 1);
-    if (report.backfill === null && head.number - cp.lastBlockNumber > 1) {
+    if (report.backfill === null && report.reorgs === 0 && head.number - cp.lastBlockNumber > 1) {
       report.backfill = { from, to: head.number };
       this.deps.metrics.inc('backfills_total');
       logger.info(
@@ -274,7 +274,10 @@ export class Scanner {
         kind: 'backfill',
         fromBlock: from,
         toBlock: head.number,
-        summary: `checkpoint ${cp.lastBlockNumber} is ${head.number - cp.lastBlockNumber} block(s) behind head ${head.number}; backfilling ${from}..${head.number} (trigger: ${trigger})`,
+        summary:
+          cp.lastBlockHash === null
+            ? `nothing ingested yet; initial sync of blocks ${from}..${head.number} (trigger: ${trigger})`
+            : `checkpoint ${cp.lastBlockNumber} is ${head.number - cp.lastBlockNumber} block(s) behind head ${head.number}; backfilling ${from}..${head.number} (trigger: ${trigger})`,
         details: { trigger, checkpoint: cp.lastBlockNumber, providerHead: head },
       });
     }
@@ -398,7 +401,8 @@ export class Scanner {
       await openIncident(tx, chainId, { kind: 'scanner_halted', severity: 'critical', requiresManualReview: true, summary, details: diagnostics });
     });
     metrics.inc('scanner_halts_total');
-    logger.error({ event: 'scanner.halted', chainId, ...diagnostics }, 'scanner halted: manual intervention required');
+    const { probes: _probes, ...summaryForLog } = diagnostics;
+    logger.error({ event: 'scanner.halted', chainId, ...summaryForLog }, 'scanner halted: manual intervention required (full probe list is in scanner_checkpoints.status_detail)');
   }
 
   // ---- Provider access ----------------------------------------------------------------------------

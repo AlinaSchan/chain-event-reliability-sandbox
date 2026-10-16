@@ -146,10 +146,11 @@ export const s04: ScenarioDefinition = {
     sb.chain.reorg({ depth: 12, replacement: 13, branch: 'D' });
     const halted = await sb.scanner.scanOnce('notification');
     const cp = await sb.checkpoint();
-    const { rows: detail } = await sb.db.query<{ status_detail: { reason: string; maxReorgDepth: number; storedTip: { number: number }; providerHead: { number: number }; searchedDownTo: number } }>(
+    const { rows: detail } = await sb.db.query<{ status_detail: { reason: string; maxReorgDepth: number; storedTip: { number: number }; providerHead: { number: number }; searchedDownTo: number; probes?: unknown } }>(
       'SELECT status_detail FROM scanner_checkpoints',
     );
-    ctx.note('halt diagnostics', detail[0]?.status_detail);
+    const { probes: _probes, ...diagnostics } = (detail[0]?.status_detail ?? {}) as Record<string, unknown>;
+    ctx.note('halt diagnostics (the per-height probes are stored too)', diagnostics);
     ctx.check(
       'unrecoverable-reorg-halts-with-diagnostics',
       {

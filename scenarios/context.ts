@@ -3,6 +3,32 @@ import { formatUnits } from '../src/domain/units.js';
 import type { Sandbox } from './harness.js';
 import type { CheckResult, Json, Narrator, ScenarioDefinition, Stage } from './types.js';
 
+/** Log events that show the system noticing or repairing something; routine progress lines are left out. */
+const NOTABLE_LOG_EVENTS = new Set([
+  'backfill.range',
+  'reorg.detected',
+  'reorg.applied',
+  'scanner.start',
+  'scanner.resume',
+  'scanner.halted',
+  'scanner.recovered',
+  'scanner.unhalted',
+  'provider.behind',
+  'rpc.retry',
+  'rpc.exhausted',
+  'writer.stale',
+  'replay.done',
+  'notifier.connected',
+  'notifier.disconnected',
+  'outbox.publish_failed',
+  'outbox.requeued',
+  'consumer.delivered',
+  'consumer.duplicate',
+  'consumer.suppressed',
+  'consumer.failed',
+  'consumer.ack_failed',
+]);
+
 /** JSON-safe copy of anything a scenario observes: bigint -> decimal string, Map/Set/Date/undefined handled. */
 export function toJson(value: unknown): Json {
   if (value === null || value === undefined) return null;
@@ -36,15 +62,28 @@ export class ScenarioContext {
     private readonly narrator: Narrator | null,
   ) {}
 
+  private logCursor = 0;
+
   stage(stage: Stage, text: string): void {
+    this.flushLogs();
     this.narrator?.stage(stage, text);
   }
 
+  /** Hands the narrator the notable log lines written since the last flush. */
+  flushLogs(): void {
+    const fresh = this.sandbox.logs.lines.slice(this.logCursor);
+    this.logCursor = this.sandbox.logs.lines.length;
+    const notable = fresh.filter((l) => typeof l.event === 'string' && NOTABLE_LOG_EVENTS.has(l.event));
+    if (notable.length > 0) this.narrator?.logs(notable.map((l) => toJson(l) as Record<string, Json>));
+  }
+
   note(text: string, data?: unknown): void {
+    this.flushLogs();
     this.narrator?.note(text, data === undefined ? undefined : toJson(data));
   }
 
   table(title: string, rows: Array<Record<string, unknown>>): void {
+    this.flushLogs();
     this.narrator?.table(title, rows.map((r) => toJson(r) as Record<string, Json>));
   }
 
@@ -65,6 +104,7 @@ export class ScenarioContext {
       actual: toJson(actual),
     };
     this.checks.push(result);
+    this.flushLogs();
     this.narrator?.check(result);
   }
 

@@ -1,0 +1,136 @@
+{
+  "projectTitle": "Chain Event Reliability Sandbox",
+  "projectSubtitle": "Missed events, duplicate processing, checkpoint recovery, RPC interruptions, transaction confirmations and chain reorganizations",
+  "projectStatus": "Independent reference implementation prepared for scope discussion. Synthetic data only. Not a production system, and not the code of any client or company.",
+  "proposedRole": "External Web3 infrastructure reviewer: reads the sandbox, checks it against the listed invariants and failure scenarios, and reports prioritized findings",
+  "implementedComponents": [
+    {
+      "name": "Deterministic EVM fixture chain",
+      "description": "Seeded blocks, ERC-20 Transfer and SettlementRecorded logs, reorganizations and branch switching, a fault-injectable provider and a head notifier that can drop, repeat and disconnect.",
+      "paths": ["src/fixtures"]
+    },
+    {
+      "name": "Event identity and deduplication",
+      "description": "Identity (chainId, blockHash, transactionHash, logIndex) enforced by a primary key and a unique constraint; insert-if-absent writes; derived state follows the rows actually changed.",
+      "paths": ["src/domain/identity.ts", "src/ingestion/apply.ts", "migrations/001_chain_state.sql"]
+    },
+    {
+      "name": "Durable checkpoint and single-writer fencing",
+      "description": "Checkpoint in PostgreSQL that moves only with the data it describes; per-chain row lock plus a fencing version so several workers are safe.",
+      "paths": ["src/storage/checkpoint.ts", "src/ingestion/apply.ts"]
+    },
+    {
+      "name": "Range scanner with backfill and bounded retries",
+      "description": "Derives progress from stored state and block ranges, treats head notifications as hints only, validates every provider answer, retries transient errors with bounded back-off, halts instead of guessing.",
+      "paths": ["src/ingestion/scanner.ts", "src/ingestion/prepare.ts", "src/ingestion/worker.ts", "src/ingestion/retry.ts"]
+    },
+    {
+      "name": "Confirmation lifecycle",
+      "description": "observed -> provisional -> confirmed | orphaned, with a configurable depth measured from the durable checkpoint.",
+      "paths": ["src/confirmation/confirm.ts", "src/domain/lifecycle.ts"]
+    },
+    {
+      "name": "Reorganization detection, correction and escalation",
+      "description": "Common-ancestor search, atomic and idempotent correction of events and derived state, audit trail, incidents for orphaned confirmed events, halt beyond the automatic rollback limit.",
+      "paths": ["src/recovery/reorg.ts", "src/ingestion/scanner.ts"]
+    },
+    {
+      "name": "Transactional outbox, Redis Streams delivery and idempotent consumer",
+      "description": "Notification intent written in the confirming transaction; publisher with SKIP LOCKED; consumer group with pending recovery and XAUTOCLAIM; effect committed before acknowledgement; re-queue after broker data loss; local notification sink.",
+      "paths": ["src/queue", "migrations/002_outbox.sql"]
+    },
+    {
+      "name": "Stored-state invariant checker",
+      "description": "Eleven SQL invariants re-derived from PostgreSQL, run after every scenario and available at GET /status?verify=true.",
+      "paths": ["src/recovery/invariants.ts"]
+    },
+    {
+      "name": "Local API with OpenAPI",
+      "description": "Fastify routes with request validation: /healthz, /status, /events, /events/:id, /alerts, /scenarios, /scenarios/:id, /metrics, /openapi.json; guarded admin and fault-injection routes disabled by default.",
+      "paths": ["src/api", "docs/openapi.json"]
+    },
+    {
+      "name": "Executable failure scenarios S01-S09 and demo",
+      "description": "Each scenario has a deterministic fixture, fault injection, expected behavior, an executable test, observable evidence and declared pass/fail checks; a CLI runner and a narrated demo.",
+      "paths": ["scenarios", "scripts/run-scenarios.ts", "scripts/demo.ts", "tests"]
+    },
+    {
+      "name": "Continuous integration",
+      "description": "Typecheck, lint, unit tests, integration and fault-injection tests against real PostgreSQL and Redis, the scenario suite, on Node 22 and 24; fails if any test or scenario is skipped.",
+      "paths": [".github/workflows/ci.yml", "scripts/test-summary.mjs"]
+    }
+  ],
+  "proposedComponents": [
+    {
+      "name": "Read-only JSON-RPC provider adapter",
+      "description": "An implementation of the ChainProvider interface for a real node, disabled by default, including eth_getLogs range and size limits."
+    },
+    {
+      "name": "Multi-provider head and ancestor comparison",
+      "description": "Cross-checking heads, headers and common ancestors across providers, with jittered back-off and a circuit breaker."
+    },
+    {
+      "name": "Finality-aware confirmation",
+      "description": "Using safe / finalized block tags alongside the configured depth."
+    },
+    {
+      "name": "Silent-gap detection",
+      "description": "Cross-checking returned logs against the header's logs bloom or receipts, or a second source, so an incomplete log range is detected without waiting for a replay."
+    },
+    {
+      "name": "Poison-message handling",
+      "description": "Delivery cap and dead-letter stream for messages that keep failing."
+    },
+    {
+      "name": "Native and internal transfer identity",
+      "description": "Event kinds and keys for native-value and trace-level transfers, kept separate from contract logs."
+    },
+    {
+      "name": "Retention and partitioning",
+      "description": "Pruning or partitioning of blocks, audit rows and outbox rows; trimming of the Redis stream."
+    },
+    {
+      "name": "Webhook sink with idempotency key",
+      "description": "An HTTP delivery target that deduplicates on the notification id, tested against a local receiver."
+    },
+    {
+      "name": "Operator tooling",
+      "description": "Resolving payload-mismatch incidents, re-driving a single notification, a guarded manual rollback."
+    },
+    {
+      "name": "Container restart tests",
+      "description": "Restarting the Redis and PostgreSQL containers during a scenario instead of simulating the loss."
+    }
+  ],
+  "scenarioIds": ["S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S09"],
+  "deliverables": [
+    "A written technical review of the sandbox against docs/reliability-invariants.md and the review questions in docs/review-guide.md, with findings ranked by severity and each tied to evidence or to a proposed failing test.",
+    "A prioritized list of failure modes the nine scenarios do not cover, each with a proposed deterministic scenario.",
+    "Recommendations on the open points in docs/known-limitations.md, in particular multi-provider operation, finality and silent-gap detection.",
+    "One handover call to walk through the findings."
+  ],
+  "outOfScope": [
+    "Production deployment, operation or monitoring of any system",
+    "Custody, wallets, signing, private keys or key management",
+    "Trading, execution, or any transaction on a live network",
+    "Paid RPC providers or any credentials",
+    "Smart-contract auditing",
+    "Unpaid implementation work on the sandbox",
+    "Legal, financial or investment advice"
+  ],
+  "indicativeDuration": "2–3 weeks",
+  "indicativeContributorHours": "16–20 hours",
+  "compensationStatus": "Paid, fixed-scope review. Actual fee: not yet agreed. Final terms: subject to written agreement.",
+  "knownLimitations": [
+    "Single synthetic provider; no quorum or failover between providers",
+    "Confirmation by depth only; safe / finalized tags are not read",
+    "No automatic detection of an incomplete log range from a consistent provider; a replay heals a gap once someone looks",
+    "No poison-message handling or dead-letter stream",
+    "No pruning or partitioning; Redis stream is not trimmed",
+    "Native-value and internal transfers are not implemented",
+    "Redis restart is simulated (stream deleted, workers SIGKILLed), not performed on a container",
+    "No performance, throughput or uptime measurements",
+    "Read API is unauthenticated and bound to loopback by default"
+  ],
+  "repositoryUrl": null
+}

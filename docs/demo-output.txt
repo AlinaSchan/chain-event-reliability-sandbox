@@ -1,0 +1,235 @@
+Real output of the demo, captured by running the commands below. Not edited.
+Environment: Windows 11, Node v24.21.0, PostgreSQL 17.10 (local), no Redis on this machine.
+Only the final duration differs between runs; block hashes and every other line are deterministic.
+
+$ npm run demo
+==============================================================================
+ Chain Event Reliability Sandbox - demo
+ S04  Chain reorganization
+==============================================================================
+ The tip of the chain is replaced by a competing branch. The scanner notices that the stored tip is no longer the provider's block, finds the last common ancestor, marks the abandoned blocks and their events orphaned (kept for audit), subtracts their effect from derived state, and applies the replacement branch - all in one transaction. A reorganization below the confirmation depth is corrected but escalated to a human; one beyond the rollback limit halts the scanner instead of guessing.
+
+ Fixture:    seed "S04", scripted traffic, head 14, confirmation depth 3, max automatic rollback 10. Six events (see the table in the demo); transaction "D" in block 12 is re-included in the replacement branch.
+ Faults:     Shallow: blocks 12-14 are replaced by four blocks of a competing branch; transaction D reappears in the new block 13 and a SETTLE 300,000 event appears in the new block 14. | Deep: blocks 8-15 are replaced, which orphans events that had already reached the confirmation depth. | Unrecoverable: a 12-block reorganization against a rollback limit of 10.
+ Acceptance: Orphaned events are no longer counted as canonical, and replacement events are processed.
+
+[1 PREPARE FIXTURE] Deterministic fixture chain (seed "S04"): 14 blocks, six events, confirmation depth 3.
+
+[2 BASELINE INGESTION] Baseline ingestion: the scanner stores the canonical chain and its events.
+    log info {"event":"scanner.start","chainId":31337,"startBlock":0,"msg":"no checkpoint yet; starting from the configured start block"}
+    log info {"event":"backfill.range","chainId":31337,"trigger":"startup","checkpoint":-1,"providerHead":{"number":14,"hash":"0xbfd36d82..."},"from":0,"to":14,"msg":"checkpoint is behind the head; backfilling the range from stored state"}
+
+[3 CANONICAL EVENTS] Canonical events
+      block  log  kind      token  amount  status       event
+      -----  ---  --------  -----  ------  -----------  -------------
+      4      0    Transfer  USDX   20000   confirmed    0x57e412d6…#0
+      9      0    Transfer  USDX   15000   confirmed    0x099a9fab…#0
+      11     0    Transfer  WRAPX  6       confirmed    0xb444a62a…#0
+      12     0    Transfer  USDX   12000   provisional  0x357ddd6d…#0
+      13     0    Transfer  GOLDX  150     provisional  0x4d65b059…#0
+      14     0    Transfer  USDX   100     provisional  0xbfd36d82…#0
+    - state before the reorganization: {"checkpoint":{"block":14,"hash":"0xbfd36d82…","status":"ok"},"providerHead":{"block":14,"hash":"0xbfd36d82…"},"events":{"provisional":3,"confirmed":3,"orphaned":0,"canonical":6},"alerts":{"open":5,"withdrawn":0},"outbox":{"pending":3,"published":0,"processed":0,"suppressed":0},"sinkDeliveries":0,"openIncidents":0}
+
+[4 FAULT INJECTION] A competing branch replaces blocks 12-14 with four new blocks; transaction D is re-included, a settlement is added.
+    Branch change
+      branch         block  hash
+      -------------  -----  -----------
+      A (abandoned)  12     0x357ddd6d…
+      A (abandoned)  13     0x4d65b059…
+      A (abandoned)  14     0xbfd36d82…
+      B (new)        12     0x6e76b25d…
+      B (new)        13     0xec8a4879…
+      B (new)        14     0xca1ec43e…
+      B (new)        15     0xccb9c205…
+
+[5 PROBLEM DETECTED] The stored tip is no longer the provider's block at that height; parent hashes no longer link.
+    - block 12: {"stored":"0x357ddd6d…","provider":"0x6e76b25d…","commonAncestor":11}
+
+[6 RECOVERY] The scanner finds the common ancestor, orphans the abandoned branch and applies the replacement in one transaction.
+    log warn {"event":"reorg.detected","chainId":31337,"storedTip":{"number":14,"hash":"0xbfd36d82..."},"providerHead":{"number":15,"hash":"0xccb9c205..."},"commonAncestor":{"number":11,"hash":"0xb444a62a..."},"depth":3,"msg":"stored chain no longer matches the provider; rolling back to the common ancestor"}
+    log warn {"event":"reorg.applied","chainId":31337,"commonAncestor":{"number":11,"hash":"0xb444a62a..."},"oldTip":{"number":14,"hash":"0xbfd36d82..."},"newTip":{"number":15,"hash":"0xccb9c205..."},"orphanedBlocks":3,"orphanedEvents":3,"orphanedFromConfirmed":0,"replacementEvents":2,"msg":"reorganization corrected"}
+    - scan report: {"outcome":"caught_up","reorgs":1,"blocksIngested":4}
+
+[3 CANONICAL EVENTS] Canonical events after recovery
+      block  log  kind                token   amount  status       event
+      -----  ---  ------------------  ------  ------  -----------  -------------
+      4      0    Transfer            USDX    20000   confirmed    0x57e412d6…#0
+      9      0    Transfer            USDX    15000   confirmed    0x099a9fab…#0
+      11     0    Transfer            WRAPX   6       confirmed    0xb444a62a…#0
+      13     0    Transfer            USDX    12000   provisional  0xec8a4879…#0
+      14     0    SettlementRecorded  SETTLE  300000  provisional  0xca1ec43e…#0
+    Orphaned events (kept for audit)
+      block  log  kind      token  amount  status    event
+      -----  ---  --------  -----  ------  --------  -------------
+      12     0    Transfer  USDX   12000   orphaned  0x357ddd6d…#0
+      13     0    Transfer  GOLDX  150     orphaned  0x4d65b059…#0
+      14     0    Transfer  USDX   100     orphaned  0xbfd36d82…#0
+    [ OK ] orphaned-events-not-canonical
+    [ OK ] replacement-events-processed
+    [ OK ] derived-state-corrected
+    [ OK ] audit-record-created
+
+[6 RECOVERY] Running the correction again, and replaying the whole range, must change nothing.
+    log info {"event":"replay.done","chainId":31337,"from":0,"to":15,"inserted":0,"duplicates":5,"msg":"range replayed"}
+    [ OK ] correction-is-idempotent
+
+[4 FAULT INJECTION] A deeper reorganization: blocks 8-15 are replaced. Events at blocks 9 and 11 had already reached the confirmation depth.
+    log warn {"event":"reorg.detected","chainId":31337,"storedTip":{"number":15,"hash":"0xccb9c205..."},"providerHead":{"number":16,"hash":"0xbb2e8d2f..."},"commonAncestor":{"number":7,"hash":"0x0cd7d754..."},"depth":8,"msg":"stored chain no longer matches the provider; rolling back to the common ancestor"}
+    log warn {"event":"reorg.applied","chainId":31337,"commonAncestor":{"number":7,"hash":"0x0cd7d754..."},"oldTip":{"number":15,"hash":"0xccb9c205..."},"newTip":{"number":12,"hash":"0x6c8ef168..."},"orphanedBlocks":8,"orphanedEvents":4,"orphanedFromConfirmed":2,"replacementEvents":0,"msg":"reorganization corrected"}
+    Incidents
+      kind                      severity  requires_manual_review  status
+      ------------------------  --------  ----------------------  ------
+      confirmed_event_orphaned  critical  true                    open
+    [ OK ] deep-reorg-flags-manual-review
+
+[4 FAULT INJECTION] An unrecoverable reorganization: 12 blocks replaced, but the automatic rollback limit is 10.
+    log error {"event":"scanner.halted","chainId":31337,"reason":"no_common_ancestor_within_max_reorg_depth","storedTip":{"number":16,"hash":"0xbb2e8d2f..."},"providerHead":{"number":17,"hash":"0x092d1c89..."},"maxReorgDepth":10,"searchedDownTo":6,"startBlock":0,"probesTotal":11,"msg":"scanner halted: manual intervention required (full probe list is in scanner_checkpoints.status_detail)"}
+    - halt diagnostics (the per-height probes are stored too): {"reason":"no_common_ancestor_within_max_reorg_depth","storedTip":{"hash":"0xbb2e8d2f...","number":16},"startBlock":0,"probesTotal":11,"providerHead":{"hash":"0x092d1c89...","number":17},"maxReorgDepth":10,"searchedDownTo":6}
+    [ OK ] unrecoverable-reorg-halts-with-diagnostics
+
+[7 FINAL STATE] The scanner is halted and waiting for a human; everything already stored is consistent.
+    - final state: {"checkpoint":{"block":16,"hash":"0xbb2e8d2f…","status":"halted"},"providerHead":{"block":17,"hash":"0x092d1c89…"},"events":{"provisional":0,"confirmed":1,"orphaned":7,"canonical":1},"alerts":{"open":1,"withdrawn":6},"outbox":{"pending":1,"published":0,"processed":0,"suppressed":2},"sinkDeliveries":0,"openIncidents":2}
+    [ OK ] invariants-hold
+
+==============================================================================
+ RESULT  PASS  S04  8/8 declared checks evaluated, 8 passed  (0.4s)
+   [ OK ] orphaned-events-not-canonical - The three events of the abandoned blocks are orphaned and the stored canonical events equal the fixture's new canonical events exactly.
+   [ OK ] replacement-events-processed - Events of the replacement branch are stored as provisional; the re-included transaction is a new event with a different identity.
+   [ OK ] derived-state-corrected - Account totals equal an independent fold over the new canonical chain; the orphaned events' alerts are withdrawn and the new ones opened.
+   [ OK ] audit-record-created - recovery_log records the reorganization (ancestor, depth, counts) and each orphaned event has an orphaned audit row.
+   [ OK ] correction-is-idempotent - Scanning again and replaying the whole range leaves the logical state unchanged.
+   [ OK ] deep-reorg-flags-manual-review - Orphaning events that had reached the confirmation depth opens a critical incident requiring manual review, and their undelivered notifications are suppressed.
+   [ OK ] unrecoverable-reorg-halts-with-diagnostics - A reorganization deeper than the rollback limit halts the scanner with diagnostics and an open incident, and changes no data.
+   [ OK ] invariants-hold - Every stored-state invariant holds at the end, including while halted.
+==============================================================================
+
+
+$ npm run demo -- --scenario S01
+==============================================================================
+ Chain Event Reliability Sandbox - demo
+ S01  Missed notification
+==============================================================================
+ The head-notification stream drops while blocks keep arriving. The notification is only a hint, so when the connection returns the scanner compares the provider head with its durable checkpoint and backfills the whole gap from stored state. A second outage with no reconnect is caught by the safety-net poll.
+
+ Fixture:    seed "S01", scripted traffic, 32 blocks. Events: USDX 20,000 (block 3), SETTLE 300,000 (12), GOLDX 150 (17), WRAPX 6 (25), USDX 10 (26), USDX 50,000 (28), GOLDX 99 (31). Confirmation depth 3, batch size 5.
+ Faults:     The notifier disconnects after block 9. Blocks 10-29 are mined while it is down; their notifications are lost (not buffered, not replayed). | A second outage with no reconnect: blocks 30-32 arrive and nothing tells the worker.
+ Acceptance: Range backfill recovers all canonical events in the test range.
+
+[1 PREPARE FIXTURE] Deterministic fixture chain created (seed "S01"); worker subscribed to the fixture notifier.
+
+[2 BASELINE INGESTION] Notifier connected. Blocks 1-9 are mined; each head notification triggers a scan.
+    log info {"event":"scanner.start","chainId":31337,"startBlock":0,"msg":"no checkpoint yet; starting from the configured start block"}
+    log info {"event":"backfill.range","chainId":31337,"trigger":"startup","checkpoint":-1,"providerHead":{"number":9,"hash":"0x1d1ad908..."},"from":0,"to":9,"msg":"checkpoint is behind the head; backfilling the range from stored state"}
+
+[3 CANONICAL EVENTS] Canonical events stored after baseline
+      block  log  kind      token  amount  status     event
+      -----  ---  --------  -----  ------  ---------  -------------
+      3      0    Transfer  USDX   20000   confirmed  0x95d80e49…#0
+    - baseline state: {"checkpoint":{"block":9,"hash":"0x1d1ad908…","status":"ok"},"providerHead":{"block":9,"hash":"0x1d1ad908…"},"events":{"provisional":0,"confirmed":1,"orphaned":0,"canonical":1},"alerts":{"open":1,"withdrawn":0},"outbox":{"pending":1,"published":0,"processed":0,"suppressed":0},"sinkDeliveries":0,"openIncidents":0}
+
+[4 FAULT INJECTION] The notifier connection drops. Blocks 10-29 are mined; none of their notifications arrive.
+    log warn {"event":"notifier.disconnected","msg":"notification stream disconnected; relying on the poll and on reconnect to catch up"}
+
+[5 PROBLEM DETECTED] The database is behind and nothing has told the worker.
+    - checkpoint 9, provider head 29, 5 canonical event(s) not in the database
+    [ OK ] gap-opens-while-disconnected
+
+[6 RECOVERY] The notifier reconnects. The worker reconciles against stored state and backfills the range by block number.
+    log info {"event":"notifier.connected","msg":"notification stream (re)connected; reconciling against stored state"}
+    log info {"event":"backfill.range","chainId":31337,"trigger":"reconnect","checkpoint":9,"providerHead":{"number":29,"hash":"0xdc5ca11d..."},"from":10,"to":29,"msg":"checkpoint is behind the head; backfilling the range from stored state"}
+    [ OK ] reconnect-triggers-reconciliation
+    [ OK ] checkpoint-equals-provider-head
+    [ OK ] all-canonical-events-recovered
+    [ OK ] backfill-recorded-as-evidence
+    Recovery log
+      from_block  to_block
+      ----------  --------
+      0           9
+      10          29
+
+[3 CANONICAL EVENTS] Canonical events stored after backfill
+      block  log  kind                token   amount  status       event
+      -----  ---  ------------------  ------  ------  -----------  -------------
+      3      0    Transfer            USDX    20000   confirmed    0x95d80e49…#0
+      12     0    SettlementRecorded  SETTLE  300000  confirmed    0x65b20d3b…#0
+      17     0    Transfer            GOLDX   150     confirmed    0xa80fe3a8…#0
+      25     0    Transfer            WRAPX   6       confirmed    0xb3b79d95…#0
+      26     0    Transfer            USDX    10      confirmed    0x74a94f0d…#0
+      28     0    Transfer            USDX    50000   provisional  0xec6dc8b3…#0
+
+[7 FINAL STATE] A second outage with no reconnect: blocks 30-32 are mined and only the poll can notice.
+    log warn {"event":"notifier.disconnected","msg":"notification stream disconnected; relying on the poll and on reconnect to catch up"}
+    log info {"event":"backfill.range","chainId":31337,"trigger":"poll","checkpoint":29,"providerHead":{"number":32,"hash":"0xcbcb4aad..."},"from":30,"to":32,"msg":"checkpoint is behind the head; backfilling the range from stored state"}
+    [ OK ] poll-recovers-without-any-notification
+    [ OK ] invariants-hold
+
+==============================================================================
+ RESULT  PASS  S01  7/7 declared checks evaluated, 7 passed  (0.3s)
+   [ OK ] gap-opens-while-disconnected - With notifications lost, the checkpoint stays behind the provider head and canonical events are missing from the database.
+   [ OK ] reconnect-triggers-reconciliation - The scan that closed the gap was triggered by the reconnect, not by a notification carrying data.
+   [ OK ] checkpoint-equals-provider-head - The checkpoint is at the provider head with the head's hash.
+   [ OK ] all-canonical-events-recovered - After backfill the stored canonical events equal the fixture's: none missing, none extra, amounts and blocks identical.
+   [ OK ] backfill-recorded-as-evidence - recovery_log has a backfill entry for blocks 10-29 and the log has a backfill.range line.
+   [ OK ] poll-recovers-without-any-notification - With the notifier down and no reconnect, a poll alone ingests the remaining blocks and their events.
+   [ OK ] invariants-hold - Every stored-state invariant holds at the end.
+==============================================================================
+
+
+$ npm run demo -- --scenario S08
+==============================================================================
+ Chain Event Reliability Sandbox - demo
+ S08  Restart and replay
+==============================================================================
+ The scanner process is killed in the middle of ingestion - once just before COMMIT, once just after - and restarted each time. It resumes from the checkpoint stored in PostgreSQL, loses nothing, repeats nothing, and ends in exactly the state of a control run that was never interrupted. A final replay of the whole range then finds nothing to do.
+
+ Fixture:    seed "S08", seeded random traffic, 60 blocks, confirmation depth 3, batch size 4 (so 16 batches). A second, identical sandbox ingests the same chain without interruption as the control.
+ Faults:     Crash 1: the process dies inside the third batch transaction, immediately before COMMIT. | Crash 2: after restart, the process dies immediately after the COMMIT of the second batch it ran.
+ Acceptance: All canonical events are recovered with no gaps and no duplicate effects.
+
+[1 PREPARE FIXTURE] Deterministic fixture chain (seed "S08"): 60 blocks of seeded traffic.
+    - events the fixture emitted: {"events":58,"highValue":10}
+
+[2 BASELINE INGESTION] Control run: an identical sandbox ingests the same chain without interruption.
+
+[4 FAULT INJECTION] Crash 1: the process dies inside the third batch transaction, just before COMMIT.
+    log info {"event":"scanner.start","chainId":31337,"startBlock":0,"msg":"no checkpoint yet; starting from the configured start block"}
+    log info {"event":"backfill.range","chainId":31337,"trigger":"startup","checkpoint":-1,"providerHead":{"number":60,"hash":"0xaae3f1f4..."},"from":0,"to":60,"msg":"checkpoint is behind the head; backfilling the range from stored state"}
+
+[5 PROBLEM DETECTED] What survived: the first two batches and their checkpoint; nothing of the third.
+    - database after crash 1: {"crash":"scanner.before_commit","checkpoint":7,"highestStoredBlock":7,"highestStoredEventBlock":6}
+    [ OK ] crash-before-commit-leaves-no-partial-batch
+
+[6 RECOVERY] Restart 1: a new scanner resumes from the checkpoint, then crashes right after the COMMIT of its second batch.
+    log info {"event":"scanner.resume","chainId":31337,"checkpoint":{"number":7,"hash":"0x647d7252..."},"version":2,"msg":"resuming from the durable checkpoint in PostgreSQL"}
+    log info {"event":"backfill.range","chainId":31337,"trigger":"startup","checkpoint":7,"providerHead":{"number":60,"hash":"0xaae3f1f4..."},"from":8,"to":60,"msg":"checkpoint is behind the head; backfilling the range from stored state"}
+    [ OK ] crash-after-commit-keeps-committed-batch
+
+[6 RECOVERY] Restart 2: a third scanner resumes from the checkpoint and finishes.
+    log info {"event":"scanner.resume","chainId":31337,"checkpoint":{"number":15,"hash":"0xe5cfed79..."},"version":4,"msg":"resuming from the durable checkpoint in PostgreSQL"}
+    log info {"event":"backfill.range","chainId":31337,"trigger":"startup","checkpoint":15,"providerHead":{"number":60,"hash":"0xaae3f1f4..."},"from":16,"to":60,"msg":"checkpoint is behind the head; backfilling the range from stored state"}
+    - final scan: {"outcome":"caught_up","blocksIngested":45}
+    Recovery log (resume entries)
+      resumedFromCheckpoint
+      ---------------------
+      7
+      15
+    [ OK ] resume-from-durable-checkpoint
+
+[7 FINAL STATE] Comparing with the uninterrupted control run.
+    [ OK ] final-state-equals-uninterrupted-run
+    [ OK ] no-gaps-no-duplicate-effects
+    log info {"event":"replay.done","chainId":31337,"from":0,"to":60,"inserted":0,"duplicates":58,"msg":"range replayed"}
+    [ OK ] replay-after-restart-adds-nothing
+    - final state: {"checkpoint":{"block":60,"hash":"0xaae3f1f4…","status":"ok"},"providerHead":{"block":60,"hash":"0xaae3f1f4…"},"events":{"provisional":3,"confirmed":55,"orphaned":0,"canonical":58},"alerts":{"open":10,"withdrawn":0},"outbox":{"pending":10,"published":0,"processed":0,"suppressed":0},"sinkDeliveries":0,"openIncidents":0}
+    [ OK ] invariants-hold
+
+==============================================================================
+ RESULT  PASS  S08  7/7 declared checks evaluated, 7 passed  (0.7s)
+   [ OK ] crash-before-commit-leaves-no-partial-batch - After a crash before COMMIT the checkpoint is at the end of the last committed batch and no block or event beyond it is stored.
+   [ OK ] crash-after-commit-keeps-committed-batch - After a crash right after COMMIT the batch and its checkpoint are durable, and the stored events are exactly the fixture's up to that block.
+   [ OK ] resume-from-durable-checkpoint - Each restart resumed from the checkpoint stored in PostgreSQL (7, then 15) and recorded it.
+   [ OK ] final-state-equals-uninterrupted-run - The final logical state is byte-for-byte the same as a control run that was never interrupted.
+   [ OK ] no-gaps-no-duplicate-effects - Canonical blocks are contiguous 0-60, stored events equal the fixture's, and no event was ever written twice.
+   [ OK ] replay-after-restart-adds-nothing - Replaying blocks 0-60 after the restarts inserts nothing and changes nothing.
+   [ OK ] invariants-hold - Every stored-state invariant holds at the end.
+==============================================================================

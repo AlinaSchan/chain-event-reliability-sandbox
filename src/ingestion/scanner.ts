@@ -242,12 +242,18 @@ export class Scanner {
     if (cp.lastBlockHash !== null) {
       if (head.number < cp.lastBlockNumber) {
         // Either the provider is lagging (or answered from a stale cache) or the chain really got shorter.
-        // Only a hash mismatch at the provider's own height proves the latter.
-        const local = await this.canonicalHashAt(head.number);
-        if (local === head.hash) {
+        // Only a hash mismatch at the provider's own height proves the latter. Below `startBlock` nothing is
+        // stored, so there is nothing to disagree with: such an answer cannot show a reorganization, only a
+        // provider that is far behind. A provider that really is on another chain is still caught, as soon as it
+        // reports a height we hold a block for.
+        const belowStart = head.number < cp.startBlock;
+        const local = belowStart ? null : await this.canonicalHashAt(head.number);
+        if (belowStart || local === head.hash) {
           logger.info(
-            { event: 'provider.behind', chainId, providerHead: head, checkpoint: { number: cp.lastBlockNumber, hash: cp.lastBlockHash } },
-            'provider head is behind the checkpoint and consistent with it; nothing to do',
+            { event: 'provider.behind', chainId, providerHead: head, belowStartBlock: belowStart, checkpoint: { number: cp.lastBlockNumber, hash: cp.lastBlockHash } },
+            belowStart
+              ? 'provider head is below the start block, so it cannot be compared with anything stored; nothing to do'
+              : 'provider head is behind the checkpoint and consistent with it; nothing to do',
           );
           return 'provider_behind';
         }

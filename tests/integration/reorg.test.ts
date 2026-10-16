@@ -218,6 +218,42 @@ describe('a provider that is behind, or answers from a stale cache', () => {
     expect((await sb.scanner.scanOnce('poll')).outcome).toBe('caught_up');
   });
 
+  it('treats a head below startBlock as a provider that is behind: nothing is stored down there to compare it with', async () => {
+    const sb = await Sandbox.create({ confirmationDepth: 3, batchSize: 50, startBlock: 5 });
+    sandboxes.push(sb);
+    minePlan(sb.chain, history());
+    await sb.scanner.scanOnce('startup');
+    expect((await sb.checkpoint()).number).toBe(14);
+    const before = await fingerprint(sb);
+
+    // One answer from a node that is 12 blocks behind: head 2, below the first block this deployment ingests.
+    // There is no stored block at that height, so "different from ours" cannot be established - and without
+    // that, a short head is not evidence of a reorganization.
+    sb.provider.faults.add({ method: 'getHead', action: 'lagging', times: 1, lagBlocks: 12 });
+    const report = await sb.scanner.scanOnce('poll');
+
+    expect(report.outcome).toBe('provider_behind');
+    expect(report.reorgs).toBe(0);
+    expect((await sb.checkpoint()).status).not.toBe('halted');
+    expect(await sb.count('incidents')).toBe(0);
+    expect(await fingerprint(sb)).toBe(before);
+    expect((await sb.scanner.scanOnce('poll')).outcome).toBe('caught_up'); // the next, healthy answer carries on
+    expect((await sb.invariants()).ok).toBe(true);
+  });
+
+  it('still halts when a head at or above startBlock disagrees with a stored block it can be compared with', async () => {
+    const sb = await Sandbox.create({ confirmationDepth: 3, batchSize: 50, startBlock: 5, maxReorgDepth: 3 });
+    sandboxes.push(sb);
+    minePlan(sb.chain, history());
+    await sb.scanner.scanOnce('startup');
+
+    // The whole stored range above the anchor is replaced: no common ancestor within maxReorgDepth.
+    sb.chain.reorg({ depth: 10, replacement: 10, branch: 'Z' });
+    const report = await sb.scanner.scanOnce('poll');
+    expect(report.outcome).toBe('halted');
+    expect(await sb.count('incidents', "kind = 'scanner_halted' AND status = 'open'")).toBe(1);
+  });
+
   it('ignores a repeated (stale) head response that equals what is already stored, and still sees real progress afterwards', async () => {
     const sb = await atHead14();
     sb.chain.mine(2);

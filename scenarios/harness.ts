@@ -10,6 +10,11 @@ import type { RetryPolicy } from '../src/ingestion/retry.js';
 import { CrashPoints } from '../src/observability/failpoints.js';
 import { LogCapture } from '../src/observability/logger.js';
 import { Metrics } from '../src/observability/metrics.js';
+import { MemoryQueue } from '../src/queue/memory-queue.js';
+import { NotificationConsumer, type ConsumerConfig } from '../src/queue/consumer.js';
+import { OutboxPublisher, type PublisherConfig } from '../src/queue/publisher.js';
+import type { StreamQueue } from '../src/queue/queue.js';
+import { RedisStreamQueue } from '../src/queue/redis-streams.js';
 import { checkInvariants, type InvariantReport } from '../src/recovery/invariants.js';
 import { Db } from '../src/storage/db.js';
 import { dropSchema, migrate } from '../src/storage/migrate.js';
@@ -18,6 +23,12 @@ export const DEFAULT_DATABASE_URL = 'postgres://sandbox:sandbox@127.0.0.1:5432/c
 
 export function databaseUrl(): string {
   return process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL;
+}
+
+/** Undefined when no Redis is available; Redis-backed tests and scenarios then report themselves as skipped. */
+export function redisUrl(): string | undefined {
+  const url = process.env.REDIS_URL;
+  return url && url.trim() !== '' ? url : undefined;
 }
 
 export interface SandboxOptions {
@@ -65,6 +76,11 @@ export class Sandbox {
   readonly crash = new CrashPoints();
   /** Back-off delays the scanner asked for. Nothing actually sleeps; this is the evidence. */
   readonly sleeps: number[] = [];
+  /** Virtual time for MemoryQueue idle calculations. */
+  readonly clock = { now: 0 };
+  /** Key prefix for everything this sandbox puts in Redis. */
+  readonly redisPrefix: string;
+  private readonly queues: StreamQueue[] = [];
   scanner: Scanner;
 
   private constructor(
@@ -76,6 +92,7 @@ export class Sandbox {
     readonly watch: WatchIndex,
     readonly options: Required<Omit<SandboxOptions, 'watch' | 'retry'>> & { retry: RetryPolicy },
   ) {
+    this.redisPrefix = `cers-test:${schema}`;
     this.scanner = this.newScanner();
   }
 
@@ -135,9 +152,90 @@ export class Sandbox {
     );
   }
 
+  // ---- Notification pipeline -----------------------------------------------------------------------
+
+  memoryQueue(): MemoryQueue {
+    const queue = new MemoryQueue(() => this.clock.now);
+    this.queues.push(queue);
+    return queue;
+  }
+
+  /** A real Redis Streams queue under this sandbox's own key prefix. Throws if REDIS_URL is not set. */
+  redisQueue(name = 'notifications'): RedisStreamQueue {
+    const url = redisUrl();
+    if (!url) throw new Error('REDIS_URL is not set');
+    const queue = new RedisStreamQueue({ url, streamKey: `${this.redisPrefix}:${name}`, group: 'notifier', connectionName: `cers-${name}` });
+    this.queues.push(queue);
+    return queue;
+  }
+
+  publisher(queue: StreamQueue, cfg: Partial<PublisherConfig> = {}): OutboxPublisher {
+    return new OutboxPublisher(
+      { db: this.db, queue, logger: this.logs.logger(), metrics: this.metrics, crash: this.crash },
+      { batchSize: 20, republishAfterMs: 0, ...cfg },
+    );
+  }
+
+  consumer(queue: StreamQueue, consumerName = 'consumer-1', cfg: Partial<ConsumerConfig> = {}): NotificationConsumer {
+    return new NotificationConsumer(
+      { db: this.db, queue, logger: this.logs.logger(), metrics: this.metrics, crash: this.crash },
+      { consumerName, batchSize: 20, claimIdleMs: 1_000, ...cfg },
+    );
+  }
+
+  async outbox(): Promise<Array<{ notificationId: string; eventId: string; type: string; status: string; attempts: number; republished: number; duplicates: number; lastError: string | null }>> {
+    const { rows } = await this.db.query<{
+      notification_id: string;
+      event_id: string;
+      notification_type: string;
+      status: string;
+      publish_attempts: number;
+      republish_count: number;
+      duplicate_deliveries: number;
+      last_error: string | null;
+    }>(
+      `SELECT notification_id, event_id, notification_type, status, publish_attempts, republish_count, duplicate_deliveries, last_error
+         FROM outbox WHERE chain_id = $1 ORDER BY id`,
+      [this.chainId],
+    );
+    return rows.map((r) => ({
+      notificationId: r.notification_id,
+      eventId: r.event_id,
+      type: r.notification_type,
+      status: r.status,
+      attempts: r.publish_attempts,
+      republished: r.republish_count,
+      duplicates: r.duplicate_deliveries,
+      lastError: r.last_error,
+    }));
+  }
+
+  async sinkCount(): Promise<number> {
+    return this.count('notification_sink');
+  }
+
   async destroy(): Promise<void> {
+    await Promise.all(this.queues.map((q) => q.close().catch(() => undefined)));
+    await this.cleanRedis();
     await this.db.close();
     await dropSchema(databaseUrl(), this.schema);
+  }
+
+  private async cleanRedis(): Promise<void> {
+    const url = redisUrl();
+    if (!url || !this.queues.some((q) => q instanceof RedisStreamQueue)) return;
+    const { Redis } = await import('ioredis');
+    const client = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 2_000 });
+    try {
+      await client.connect();
+      const keys: string[] = [];
+      for await (const batch of client.scanStream({ match: `${this.redisPrefix}:*`, count: 100 })) keys.push(...(batch as string[]));
+      if (keys.length > 0) await client.del(...keys);
+    } catch {
+      // best-effort cleanup of test keys
+    } finally {
+      client.disconnect();
+    }
   }
 
   // ---- Inspecting stored state ---------------------------------------------------------------------

@@ -41,7 +41,7 @@
     },
     {
       "name": "Stored-state invariant checker",
-      "description": "Eleven SQL invariants re-derived from PostgreSQL, run after every scenario and available at GET /status?verify=true.",
+      "description": "Twelve SQL invariants re-derived from PostgreSQL, run after every scenario and available at GET /status?verify=true.",
       "paths": ["src/recovery/invariants.ts"]
     },
     {
@@ -132,5 +132,5 @@
     "No performance, throughput or uptime measurements",
     "Read API is unauthenticated and bound to loopback by default"
   ],
-  "repositoryUrl": null
+  "repositoryUrl": "https://github.com/AlinaSchan/chain-event-reliability-sandbox"
 }

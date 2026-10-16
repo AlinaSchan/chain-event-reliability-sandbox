@@ -5,6 +5,14 @@
   "description": "Deterministic sandbox for studying missed events, duplicate delivery, checkpoint recovery, confirmations and reorganizations in EVM event monitoring.",
   "author": "Logos (https://logos.co/)",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlinaSchan/chain-event-reliability-sandbox.git"
+  },
+  "homepage": "https://github.com/AlinaSchan/chain-event-reliability-sandbox#readme",
+  "bugs": {
+    "url": "https://github.com/AlinaSchan/chain-event-reliability-sandbox/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.12"

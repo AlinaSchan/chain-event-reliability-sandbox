@@ -4,8 +4,8 @@
 
 A deterministic sandbox for studying how an EVM event monitor stays correct when things go wrong: head
 notifications are lost, events arrive twice, the RPC times out, a worker dies mid-write, Redis redelivers, blocks
-are reorganized. It runs locally against PostgreSQL and Redis, makes no outbound network calls at runtime, needs no
-paid API, and every claim below is backed by a test or an executable scenario you can run yourself.
+are reorganized. It runs locally against PostgreSQL and Redis, talks to nothing else at runtime, needs no paid API, and every claim
+below is backed by a test or an executable scenario you can run yourself.
 
 It is an **independent demonstration repository** used to discuss scope. It is not a production backend, it is
 not the code of any company or client, and it contains only synthetic data: no keys, no wallets, no live RPC, no

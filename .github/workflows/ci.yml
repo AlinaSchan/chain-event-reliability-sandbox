@@ -69,11 +69,16 @@ jobs:
       - name: Failure scenarios S01-S09 (fails on any failed or skipped scenario)
         run: npm run scenarios
 
-      - name: Narrated runs of the two Redis scenarios (kept as artifacts)
+      - name: Narrated runs of the two Redis scenarios (printed here, and kept as artifacts)
         run: |
           mkdir -p demo-transcripts
           npm run -s demo -- --scenario S03 > demo-transcripts/S03.txt
           npm run -s demo -- --scenario S07 > demo-transcripts/S07.txt
+          for id in S03 S07; do
+            echo "::group::narrated run of $id"
+            cat "demo-transcripts/$id.txt"
+            echo "::endgroup::"
+          done
 
       - name: Upload demo transcripts
         uses: actions/upload-artifact@v7

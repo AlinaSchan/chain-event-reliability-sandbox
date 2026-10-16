@@ -169,6 +169,33 @@ export class Sandbox {
     return queue;
   }
 
+  /** A queue whose broker cannot be reached (nothing listens on port 1): every call fails with a QueueError. */
+  unreachableRedisQueue(): RedisStreamQueue {
+    const queue = new RedisStreamQueue({
+      url: 'redis://127.0.0.1:1',
+      streamKey: `${this.redisPrefix}:unreachable`,
+      group: 'notifier',
+      readyTimeoutMs: 400,
+      connectionName: 'cers-unreachable',
+    });
+    this.queues.push(queue);
+    return queue;
+  }
+
+  /** Simulates the broker losing a stream and its consumer group (a restart without persistence). */
+  async deleteRedisStream(name = 'notifications'): Promise<void> {
+    const url = redisUrl();
+    if (!url) throw new Error('REDIS_URL is not set');
+    const { Redis } = await import('ioredis');
+    const client = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 2_000 });
+    try {
+      await client.connect();
+      await client.del(`${this.redisPrefix}:${name}`);
+    } finally {
+      client.disconnect();
+    }
+  }
+
   publisher(queue: StreamQueue, cfg: Partial<PublisherConfig> = {}): OutboxPublisher {
     return new OutboxPublisher(
       { db: this.db, queue, logger: this.logs.logger(), metrics: this.metrics, crash: this.crash },
@@ -212,6 +239,46 @@ export class Sandbox {
 
   async sinkCount(): Promise<number> {
     return this.count('notification_sink');
+  }
+
+  /**
+   * A deterministic string of the logical state: checkpoint, events and their statuses, derived totals,
+   * alerts, notification identities and statuses, deliveries, canonical blocks. Two runs that end in the
+   * same state have the same fingerprint, whatever happened on the way. Counters like seen_count and
+   * attempt numbers are excluded on purpose: they record history, not state.
+   */
+  async fingerprint(): Promise<string> {
+    const cp = await this.checkpoint();
+    const outbox = (await this.outbox()).map((o) => [o.notificationId, o.type, o.status]);
+    const { rows: sink } = await this.db.query<{ notification_id: string }>(
+      'SELECT notification_id FROM notification_sink WHERE chain_id = $1 ORDER BY notification_id',
+      [this.chainId],
+    );
+    return JSON.stringify({
+      checkpoint: [cp.number, cp.hash],
+      events: (await this.events()).map((e) => [e.eventId, e.status, e.amount.toString(), e.confirmCount]),
+      flows: (await this.flows()).map((f) => [f.token, f.account, f.inbound.toString(), f.outbound.toString()]),
+      alerts: await this.alerts(),
+      outbox,
+      sink: sink.map((r) => r.notification_id),
+      blocks: (await this.canonicalBlocks()).map((b) => [b.number, b.hash]),
+    });
+  }
+
+  /** A compact summary for narration and evidence. */
+  async snapshot(): Promise<Record<string, unknown>> {
+    const cp = await this.checkpoint();
+    const outbox = await this.outbox();
+    const by = (status: string) => outbox.filter((o) => o.status === status).length;
+    return {
+      checkpoint: { block: cp.number, hash: cp.hash ? `${cp.hash.slice(0, 10)}…` : null, status: cp.status },
+      providerHead: { block: this.chain.head.number, hash: `${this.chain.head.hash.slice(0, 10)}…` },
+      events: await this.counts(),
+      alerts: await this.alerts(),
+      outbox: { pending: by('pending'), published: by('published'), processed: by('processed'), suppressed: by('suppressed') },
+      sinkDeliveries: await this.sinkCount(),
+      openIncidents: await this.count('incidents', "status = 'open'"),
+    };
   }
 
   async destroy(): Promise<void> {

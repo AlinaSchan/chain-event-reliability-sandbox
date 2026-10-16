@@ -42,5 +42,7 @@ export interface StreamQueue {
   claimStale(consumer: string, opts: { minIdleMs: number; count: number }): Promise<StreamMessage[]>;
   ack(id: string): Promise<void>;
   pending(): Promise<PendingSummary>;
+  /** Messages the broker currently holds for this stream, acknowledged or not. */
+  length(): Promise<number>;
   close(): Promise<void>;
 }

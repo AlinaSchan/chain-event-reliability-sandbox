@@ -94,14 +94,18 @@ export class MemoryQueue implements StreamQueue {
     });
   }
 
+  length(): Promise<number> {
+    return this.guard(() => this.entries.length);
+  }
+
   close(): Promise<void> {
     return Promise.resolve();
   }
 
   // ---- Test controls ---------------------------------------------------------------------------
 
-  /** Everything the broker holds, delivered or not. */
-  get length(): number {
+  /** Everything the broker holds, delivered or not (synchronous, for assertions). */
+  get size(): number {
     return this.entries.length;
   }
 

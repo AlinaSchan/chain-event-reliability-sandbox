@@ -66,7 +66,7 @@ describe('transactional outbox -> queue -> consumer', () => {
     expect(await sb.outbox()).toEqual([]);
     const queue = sb.memoryQueue();
     expect(await sb.publisher(queue).publishPending()).toMatchObject({ selected: 0, published: 0 });
-    expect(queue.length).toBe(0);
+    expect(queue.size).toBe(0);
     expect(await sb.sinkCount()).toBe(0);
   });
 });
@@ -102,11 +102,11 @@ describe('the publisher crashes after the queue accepted a message and before th
 
     sb.crash.arm('publisher.after_publish_before_mark');
     await expect(sb.publisher(queue).publishPending()).rejects.toBeInstanceOf(InjectedCrash);
-    expect(queue.length).toBe(1); // one message is already in the stream...
+    expect(queue.size).toBe(1); // one message is already in the stream...
     expect((await sb.outbox()).map((o) => o.status)).toEqual(['pending', 'pending']); // ...but the database does not know
 
     expect(await sb.publisher(queue).publishPending()).toMatchObject({ published: 2 });
-    expect(queue.length).toBe(3); // 2 notifications, 3 messages: at-least-once, honestly
+    expect(queue.size).toBe(3); // 2 notifications, 3 messages: at-least-once, honestly
 
     const report = await sb.consumer(queue).processBatch();
     expect(report).toMatchObject({ received: 3, delivered: 2, duplicates: 1, acked: 3 });
@@ -194,7 +194,7 @@ describe('duplicate and lost messages', () => {
     const publisher = sb.publisher(queue);
     await publisher.publishPending();
     queue.flush(); // restart without persistence: messages and consumer group are gone
-    expect(queue.length).toBe(0);
+    expect(queue.size).toBe(0);
 
     expect(await sb.consumer(queue).processBatch()).toMatchObject({ received: 0 });
     expect((await sb.outbox()).map((o) => o.status)).toEqual(['published', 'published']); // the blocking state is visible

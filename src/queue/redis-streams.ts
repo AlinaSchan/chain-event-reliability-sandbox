@@ -138,6 +138,10 @@ export class RedisStreamQueue implements StreamQueue {
     });
   }
 
+  async length(): Promise<number> {
+    return this.run('XLEN', () => this.client.xlen(this.opts.streamKey));
+  }
+
   async close(): Promise<void> {
     try {
       await this.client.quit();

@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { ReplayMismatchError } from '../../src/domain/errors.js';
 import type { Hex } from '../../src/domain/types.js';
+import { applyBatch } from '../../src/ingestion/apply.js';
+import { prepareBlocks } from '../../src/ingestion/prepare.js';
+import { silentLogger } from '../../src/observability/logger.js';
 import { block, minePlan, transfer, tx } from '../../scenarios/builders.js';
 import { Sandbox } from '../../scenarios/harness.js';
 import { diffCanonical, EMPTY_DIFF, expectedFlows } from '../../scenarios/oracle.js';
@@ -98,6 +102,31 @@ describe('repeated delivery produces one logical effect', () => {
     expect(await sb.count('outbox', 'event_id = $2', [victim.eventId])).toBe(1);
     expect(await sb.flows()).toEqual(expectedFlows(sb.chain.expectedEvents()));
     expect((await sb.invariants()).ok).toBe(true);
+  });
+
+  it('refuses a replay batch for heights that are no longer stored (the chain shrank after the range was read) instead of writing above the checkpoint', async () => {
+    const sb = await create({ confirmationDepth: 2 });
+    minePlan(sb.chain, plan(), 8);
+    await sb.scanner.scanOnce('startup');
+
+    // A replay reads blocks 6..8 ...
+    const headers = [6, 7, 8].map((n) => sb.chain.getHeaderByNumber(n)!);
+    const batch = prepareBlocks(sb.chainId, headers, sb.chain.logsInRange(6, 8, sb.watch.addresses), sb.watch);
+    // ... and before it applies them a reorganization replaces the tip with a shorter branch (head 8 -> 5).
+    sb.chain.reorg({ depth: 4, replacement: 1, branch: 'S' });
+    await sb.scanner.scanOnce('poll');
+    expect((await sb.checkpoint()).number).toBe(5);
+    const settled = await sb.fingerprint();
+
+    await expect(
+      applyBatch(
+        { db: sb.db, logger: silentLogger(), metrics: sb.metrics },
+        { chainId: sb.chainId, mode: 'replay', trigger: 'manual', expectedVersion: null, blocks: batch, confirmationDepth: 2, watch: sb.watch },
+      ),
+    ).rejects.toBeInstanceOf(ReplayMismatchError);
+    expect(await sb.fingerprint()).toBe(settled); // nothing was written
+    expect((await sb.canonicalBlocks()).at(-1)?.number).toBe(5);
+    expect((await sb.invariants()).checks.filter((c) => c.violations > 0)).toEqual([]);
   });
 
   it('a different payload under an identity that is already stored is kept out and escalated, not applied', async () => {

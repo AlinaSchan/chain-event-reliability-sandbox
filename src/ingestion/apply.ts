@@ -90,7 +90,8 @@ export async function applyBatch(deps: ApplyDeps, input: ApplyInput): Promise<Ap
     }
     if (input.mode === 'replay') await verifyReplayBlocks(tx, input);
 
-    const blockStats = await insertBlocks(tx, input);
+    // A replay only ever adds events to blocks that are already stored and canonical; it never writes a block.
+    const blockStats = input.mode === 'replay' ? { inserted: 0, reactivated: 0 } : await insertBlocks(tx, input);
     const eventStats = await insertEvents(tx, input);
     const quarantined = await quarantineLogs(tx, input);
 
@@ -231,6 +232,11 @@ async function verifyAttachment(tx: Tx, cp: Checkpoint, input: ApplyInput): Prom
   }
 }
 
+/**
+ * Under the checkpoint lock, every replayed block must be exactly the stored canonical block at its height.
+ * A height with no stored canonical block means the chain was shortened (or reorganized) after the range was
+ * read; writing it would put a canonical block above the checkpoint, so the replay is refused instead.
+ */
 async function verifyReplayBlocks(tx: Tx, input: ApplyInput): Promise<void> {
   const numbers = input.blocks.map((b) => b.header.number);
   const { rows } = await tx.query<{ block_number: number; block_hash: Hex }>(
@@ -240,7 +246,12 @@ async function verifyReplayBlocks(tx: Tx, input: ApplyInput): Promise<void> {
   const stored = new Map(rows.map((r) => [r.block_number, r.block_hash]));
   for (const block of input.blocks) {
     const hash = stored.get(block.header.number);
-    if (hash !== undefined && hash !== block.header.hash) {
+    if (hash === undefined) {
+      throw new ReplayMismatchError(
+        `block ${block.header.number}: no canonical block is stored at this height (the chain changed since the range was read); run a normal scan first`,
+      );
+    }
+    if (hash !== block.header.hash) {
       throw new ReplayMismatchError(
         `block ${block.header.number}: provider says ${block.header.hash}, stored canonical block is ${hash}; run a normal scan to handle the reorganization first`,
       );

@@ -108,7 +108,10 @@ export const s03: ScenarioDefinition = {
 
     ctx.stage('final', 'Three notifications, three deliveries, nothing pending.');
     const outbox = await sb.outbox();
-    ctx.table('Outbox', outbox.map((o) => ({ notification: `${o.notificationId.split('#')[0]?.slice(2, 12)}…#${o.notificationId.split('#').pop()}`, status: o.status, duplicateDeliveries: o.duplicates })));
+    ctx.table(
+      'Outbox',
+      outbox.map((o) => ({ notification: `${o.notificationId.split(':')[1]?.slice(0, 10)}…#epoch ${o.notificationId.split('#').pop()}`, status: o.status, duplicateDeliveries: o.duplicates })),
+    );
     const { rows: sink } = await sb.db.query<{ n: number }>('SELECT count(*)::int AS n FROM notification_sink GROUP BY notification_id');
     ctx.check(
       'exactly-one-delivery-per-notification',

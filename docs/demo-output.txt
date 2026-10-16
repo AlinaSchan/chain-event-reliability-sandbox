@@ -1,5 +1,6 @@
-Real output of the demo, captured by running the commands below. Not edited.
-Environment: Windows 11, Node v24.21.0, PostgreSQL 17.10 (local), no Redis on this machine.
+Real output of the demo, captured by running the commands shown. Not edited.
+The first three transcripts (S04, S01, S08) were captured locally: Windows 11, Node v24.21.0, PostgreSQL 17.10, no
+Redis on that machine. S03 and S07 need a real Redis and were captured in GitHub Actions; see the note before them.
 Only the final duration differs between runs; block hashes and every other line are deterministic.
 
 $ npm run demo
@@ -231,5 +232,150 @@ $ npm run demo -- --scenario S08
    [ OK ] final-state-equals-uninterrupted-run - The final logical state is byte-for-byte the same as a control run that was never interrupted.
    [ OK ] no-gaps-no-duplicate-effects - Canonical blocks are contiguous 0-60, stored events equal the fixture's, and no event was ever written twice.
    [ OK ] replay-after-restart-adds-nothing - Replaying blocks 0-60 after the restarts inserts nothing and changes nothing.
+   [ OK ] invariants-hold - Every stored-state invariant holds at the end.
+==============================================================================
+
+------------------------------------------------------------------------------
+Captured in GitHub Actions: workflow run 38915832476, commit 391d921, job "node 24"
+(GitHub-hosted Linux runner, Node 24, PostgreSQL 17 and Redis 7 from docker-compose.yml).
+Printed by the workflow step "Narrated runs of the two Redis scenarios" and copied from the job log.
+Not edited, apart from removing the timestamp GitHub puts in front of every log line.
+------------------------------------------------------------------------------
+
+$ npm run demo -- --scenario S03
+==============================================================================
+ Chain Event Reliability Sandbox - demo
+ S03  Crash after database commit, before Redis ACK
+==============================================================================
+ A consumer commits a notification's effect to PostgreSQL and dies before sending XACK. Redis still lists the message as pending, so it comes back - to the restarted consumer, or to another one after the idle time. The outbox row is already settled, so the redelivery is recognised and only acknowledged: the notification is delivered exactly once in effect.
+
+ Fixture:    seed "S03", scripted traffic, real Redis Streams. USDX 20,000 (block 3) and GOLDX 150 (block 4) are confirmed by head 9; USDX 12,000 (block 10) by head 15. Confirmation depth 2.
+ Faults:     Phase 1: consumer "worker-1" crashes after committing the first effect and before XACK (it had also received the second message). | Phase 2: consumer "worker-1" crashes the same way for a later notification and never comes back; "worker-2" must take it over.
+ Acceptance: A restart does not double the processing.
+
+[1 PREPARE FIXTURE] Deterministic fixture chain (seed "S03") and a real Redis Streams queue under a private key prefix.
+    log info {"event":"scanner.start","chainId":31337,"startBlock":0,"msg":"no checkpoint yet; starting from the configured start block"}
+    log info {"event":"backfill.range","chainId":31337,"trigger":"startup","checkpoint":-1,"providerHead":{"number":9,"hash":"0x79dd183c..."},"from":0,"to":9,"msg":"checkpoint is behind the head; backfilling the range from stored state"}
+
+[2 BASELINE INGESTION] Two high-value events are confirmed, so two outbox rows exist; the publisher moves them into the Redis stream.
+    - publisher: {"selected":2,"published":2}
+    - state: {"checkpoint":{"block":9,"hash":"0x79dd183c…","status":"ok"},"providerHead":{"block":9,"hash":"0x79dd183c…"},"events":{"provisional":0,"confirmed":2,"orphaned":0,"canonical":2},"alerts":{"open":2,"withdrawn":0},"outbox":{"pending":0,"published":2,"processed":0,"suppressed":0},"sinkDeliveries":0,"openIncidents":0}
+
+[4 FAULT INJECTION] Consumer "worker-1" handles the first message: the sink row is committed, then the process dies before XACK.
+    log info {"event":"consumer.delivered","consumer":"worker-1","messageId":"1792160919496-0","notificationId":"31337:0xcc32958e...:0xc62728ee...:0#event_confirmed#1","msg":"notification delivered"}
+
+[5 PROBLEM DETECTED] Redis believes nothing was processed; PostgreSQL knows one delivery happened.
+    - state at the moment of the crash: {"crashed":true,"sinkRows":1,"unacknowledged":2}
+    [ OK ] effect-committed-before-crash
+
+[6 RECOVERY] worker-1 restarts under the same name; its own pending messages come first.
+    log info {"event":"consumer.duplicate","consumer":"worker-1","messageId":"1792160919496-0","notificationId":"31337:0xcc32958e...:0xc62728ee...:0#event_confirmed#1","msg":"notification duplicate"}
+    log info {"event":"consumer.delivered","consumer":"worker-1","messageId":"1792160919498-0","notificationId":"31337:0xda9c6d26...:0x536ae683...:0#event_confirmed#1","msg":"notification delivered"}
+    - restarted consumer: {"received":2,"delivered":1,"duplicates":1,"suppressed":0,"unknown":0,"failed":0,"acked":2,"ackFailed":0}
+    [ OK ] restart-does-not-double-process
+    [ OK ] duplicate-recognised-from-the-database
+
+[4 FAULT INJECTION] A later notification arrives. worker-1 crashes the same way and is gone for good.
+    log info {"event":"backfill.range","chainId":31337,"trigger":"poll","checkpoint":9,"providerHead":{"number":15,"hash":"0xcee2d7bc..."},"from":10,"to":15,"msg":"checkpoint is behind the head; backfilling the range from stored state"}
+    log info {"event":"consumer.delivered","consumer":"worker-1","messageId":"1792160919549-0","notificationId":"31337:0x30139908...:0xab23d7de...:0#event_confirmed#1","msg":"notification delivered"}
+    - abandoned message(s) in worker-1's pending list: 1
+
+[6 RECOVERY] worker-2 starts. It must not steal a fresh message, but takes it over once it has been idle long enough.
+    log info {"event":"consumer.duplicate","consumer":"worker-2","messageId":"1792160919549-0","notificationId":"31337:0x30139908...:0xab23d7de...:0#event_confirmed#1","msg":"notification duplicate"}
+    - worker-2 before the idle time: {"received":0,"delivered":0,"duplicates":0,"suppressed":0,"unknown":0,"failed":0,"acked":0,"ackFailed":0}
+    - worker-2 after the idle time: {"received":1,"delivered":0,"duplicates":1,"suppressed":0,"unknown":0,"failed":0,"acked":1,"ackFailed":0}
+    [ OK ] takeover-by-another-consumer-after-idle
+
+[7 FINAL STATE] Three notifications, three deliveries, nothing pending.
+    Outbox
+      notification         status     duplicateDeliveries
+      -------------------  ---------  -------------------
+      0xcc32958e…#epoch 1  processed  1
+      0xda9c6d26…#epoch 1  processed  0
+      0x30139908…#epoch 1  processed  1
+    [ OK ] exactly-one-delivery-per-notification
+    [ OK ] invariants-hold
+
+==============================================================================
+ RESULT  PASS  S03  6/6 declared checks evaluated, 6 passed  (1.0s)
+   [ OK ] effect-committed-before-crash - At the moment of the crash the first effect is durable in PostgreSQL while Redis still holds both messages as unacknowledged.
+   [ OK ] restart-does-not-double-process - The restarted consumer delivers the second notification once, only acknowledges the first, and the sink has exactly two rows.
+   [ OK ] duplicate-recognised-from-the-database - The redelivered message was recognised as a duplicate from the outbox row, and nothing remains pending in Redis.
+   [ OK ] takeover-by-another-consumer-after-idle - A different consumer claims the abandoned message only after the idle time and settles it as a duplicate.
+   [ OK ] exactly-one-delivery-per-notification - Every notification has exactly one sink row and one processed outbox row.
+   [ OK ] invariants-hold - Every stored-state invariant holds at the end.
+==============================================================================
+
+$ npm run demo -- --scenario S07
+==============================================================================
+ Chain Event Reliability Sandbox - demo
+ S07  Outbox delivery failure
+==============================================================================
+ Redis is unreachable when the database has already committed; the consumer is not running while messages pile up; the publisher dies after Redis accepted a message but before the row was marked; and Redis loses the stream outright. In every case the transactional outbox in PostgreSQL either completes the delivery or shows exactly what is blocked, and no notification takes effect twice.
+
+ Fixture:    seed "S07", scripted traffic, real Redis Streams. High-value events: USDX 20,000 (block 3), GOLDX 150 (4), USDX 30,000 (10), WRAPX 9 (16). Confirmation depth 2, scanned in four waves.
+ Faults:     Redis unreachable (connection refused) when the first two notifications are published. | Consumer not running while the first two messages wait in the stream. | Publisher crashes after XADD succeeded and before the outbox row was marked published. | The stream and its consumer group are deleted from Redis after the fourth notification was published (restart without persistence).
+ Acceptance: Durable records restore delivery without repeating a logical effect.
+
+[1 PREPARE FIXTURE] Deterministic fixture chain (seed "S07") and a real Redis Streams queue under a private key prefix.
+    log info {"event":"scanner.start","chainId":31337,"startBlock":0,"msg":"no checkpoint yet; starting from the configured start block"}
+    log info {"event":"backfill.range","chainId":31337,"trigger":"startup","checkpoint":-1,"providerHead":{"number":9,"hash":"0x0734fffd..."},"from":0,"to":9,"msg":"checkpoint is behind the head; backfilling the range from stored state"}
+    - two confirmed high-value events, two outbox rows: ["pending","pending"]
+
+[4 FAULT INJECTION] Redis is unreachable at the moment the publisher tries to deliver. PostgreSQL has already committed the events and the outbox rows.
+    log warn {"event":"outbox.publish_failed","notificationId":"31337:0x7966b94e...:0x56e38621...:0#event_confirmed#1","error":"Redis not ready after 400ms (status: reconnecting)","msg":"queue unavailable; the row stays pending and is retried on the next pass"}
+
+[5 PROBLEM DETECTED] Nothing was lost and nothing was delivered; the blocking state is explicit.
+    Outbox while Redis is unreachable
+      status   attempts  lastError
+      -------  --------  --------------------------------------------------
+      pending  1         Redis not ready after 400ms (status: reconnecting)
+      pending  0
+    [ OK ] redis-down-leaves-outbox-pending-with-error
+
+[6 RECOVERY] Redis is reachable again. The publisher delivers both rows; the consumer is still down, so the messages wait.
+    - with no consumer running: {"streamLength":2,"sinkRows":0,"outbox":["published","published"]}
+    log info {"event":"consumer.delivered","consumer":"worker-1","messageId":"1792160921831-0","notificationId":"31337:0x7966b94e...:0x56e38621...:0#event_confirmed#1","msg":"notification delivered"}
+    log info {"event":"consumer.delivered","consumer":"worker-1","messageId":"1792160921832-0","notificationId":"31337:0x28f10de1...:0x2d6da6cb...:0#event_confirmed#1","msg":"notification delivered"}
+    [ OK ] consumer-down-messages-wait-then-drain
+
+[4 FAULT INJECTION] A third notification is ready. The publisher dies after Redis accepted the message and before the row was marked.
+    log info {"event":"backfill.range","chainId":31337,"trigger":"poll","checkpoint":9,"providerHead":{"number":15,"hash":"0x259f4235..."},"from":10,"to":15,"msg":"checkpoint is behind the head; backfilling the range from stored state"}
+    - after the publisher crash: {"publisherCrashed":true,"streamLength":3,"rowStatus":"pending"}
+
+[6 RECOVERY] A restarted publisher sees the row still pending and publishes it again. The stream now holds a duplicate.
+    log info {"event":"consumer.delivered","consumer":"worker-1","messageId":"1792160921869-0","notificationId":"31337:0x458e77b2...:0x11c33432...:0#event_confirmed#1","msg":"notification delivered"}
+    log info {"event":"consumer.duplicate","consumer":"worker-1","messageId":"1792160921872-0","notificationId":"31337:0x458e77b2...:0x11c33432...:0#event_confirmed#1","msg":"notification duplicate"}
+    [ OK ] publisher-crash-duplicate-has-no-second-effect
+
+[4 FAULT INJECTION] A fourth notification is published; then Redis loses the stream and its consumer group before any consumer saw it.
+    log info {"event":"backfill.range","chainId":31337,"trigger":"poll","checkpoint":15,"providerHead":{"number":21,"hash":"0xf8ee3cdb..."},"from":16,"to":21,"msg":"checkpoint is behind the head; backfilling the range from stored state"}
+
+[5 PROBLEM DETECTED] The consumer finds nothing. The outbox shows the row as published with no effect - Redis's memory is not the source of truth.
+    - after Redis lost the stream: {"consumerReceived":0,"rowStatus":"published","sinkRows":3}
+
+[6 RECOVERY] The reconciler re-queues rows that were published but never produced an effect; the publisher and consumer finish the job.
+    log warn {"event":"outbox.requeued","count":1,"msg":"published outbox rows with no recorded effect were re-queued"}
+    log info {"event":"consumer.delivered","consumer":"worker-1","messageId":"1792160921919-0","notificationId":"31337:0x20ebe9d7...:0xe7906dd0...:0#event_confirmed#1","msg":"notification delivered"}
+    [ OK ] redis-data-loss-repaired-from-outbox
+
+[7 FINAL STATE] Four notifications, each delivered once.
+    Outbox
+      status     attempts  republished  duplicateDeliveries
+      ---------  --------  -----------  -------------------
+      processed  2         0            0
+      processed  1         0            0
+      processed  1         0            1
+      processed  2         1            0
+    [ OK ] every-notification-delivered-exactly-once
+    [ OK ] invariants-hold
+
+==============================================================================
+ RESULT  PASS  S07  6/6 declared checks evaluated, 6 passed  (0.8s)
+   [ OK ] redis-down-leaves-outbox-pending-with-error - With Redis unreachable the rows stay pending, the error is recorded on them, and the confirmed events are unaffected.
+   [ OK ] consumer-down-messages-wait-then-drain - With no consumer the messages wait in Redis and nothing is delivered; once a consumer runs, every waiting message is delivered once.
+   [ OK ] publisher-crash-duplicate-has-no-second-effect - After a publisher crash between XADD and marking, the stream holds a duplicate but the sink has one delivery for the notification.
+   [ OK ] redis-data-loss-repaired-from-outbox - After Redis loses the stream, published-but-unprocessed rows are visible, get re-queued from PostgreSQL, and are delivered.
+   [ OK ] every-notification-delivered-exactly-once - Four notifications, four processed outbox rows, four sink rows, each notification once.
    [ OK ] invariants-hold - Every stored-state invariant holds at the end.
 ==============================================================================

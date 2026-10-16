@@ -4,8 +4,8 @@
 
 A deterministic sandbox for studying how an EVM event monitor stays correct when things go wrong: head
 notifications are lost, events arrive twice, the RPC times out, a worker dies mid-write, Redis redelivers, blocks
-are reorganized. It runs locally against PostgreSQL and Redis, talks to nothing else at runtime, needs no paid API, and every claim
-below is backed by a test or an executable scenario you can run yourself.
+are reorganized. It runs locally against PostgreSQL and Redis, talks to nothing else at runtime, needs no paid API,
+and every claim below is backed by a test or an executable scenario you can run yourself.
 
 It is an **independent demonstration repository** used to discuss scope. It is not a production backend, it is
 not the code of any company or client, and it contains only synthetic data: no keys, no wallets, no live RPC, no
@@ -137,7 +137,8 @@ With the service running: `curl -s localhost:3000/status`, `curl -s 'localhost:3
 ### Demo output
 
 This is a real run of `npm run demo` (excerpt; the complete transcripts of S04, S01 and S08 are in
-[docs/demo-output.txt](docs/demo-output.txt), captured on Windows 11 with Node 24 and PostgreSQL 17):
+[docs/demo-output.txt](docs/demo-output.txt), captured on Windows 11 with Node 24 and PostgreSQL 17; S03 and S07 need
+Redis and were captured in GitHub Actions, and are in the same file):
 
 ```text
 [1 PREPARE FIXTURE] Deterministic fixture chain (seed "S04"): 14 blocks, six events, confirmation depth 3.

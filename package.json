@@ -17,6 +17,7 @@
     "scenarios": "tsx scripts/run-scenarios.ts",
     "ops": "tsx scripts/ops.ts",
     "openapi": "tsx scripts/generate-openapi.ts",
+    "docs:scenarios": "tsx scripts/generate-scenario-docs.ts",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration"

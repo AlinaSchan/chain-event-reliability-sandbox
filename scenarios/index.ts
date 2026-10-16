@@ -29,6 +29,7 @@ export function toCatalog(def: ScenarioDefinition) {
     faults: def.faults,
     expected: def.expected,
     acceptance: def.acceptance,
+    evidence: def.evidence,
     requires: def.requires,
     checks: def.checks,
   };

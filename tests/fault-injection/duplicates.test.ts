@@ -92,6 +92,10 @@ describe('repeated delivery produces one logical effect', () => {
 
     expect(report.eventsInserted).toBe(1); // ...but the replay finds it and fills it
     expect(diffCanonical(await sb.events(), sb.chain.expectedEvents())).toEqual(EMPTY_DIFF);
+    // The block is already deep, so the healed event is inserted as provisional and confirmed in the same transaction.
+    const { rows: audit } = await sb.db.query<{ action: string }>('SELECT action FROM event_audit WHERE event_id = $1 ORDER BY id', [victim.eventId]);
+    expect(audit.map((a) => a.action)).toEqual(['ingested', 'confirmed']);
+    expect(await sb.count('outbox', 'event_id = $2', [victim.eventId])).toBe(1);
     expect(await sb.flows()).toEqual(expectedFlows(sb.chain.expectedEvents()));
     expect((await sb.invariants()).ok).toBe(true);
   });

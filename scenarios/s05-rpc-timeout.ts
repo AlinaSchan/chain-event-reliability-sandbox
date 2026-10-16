@@ -22,6 +22,11 @@ export const s05: ScenarioDefinition = {
     'Logs that do not belong to the headers\' blocks are rejected (INCONSISTENT) and fetched again; nothing from the wrong branch is stored.',
   ],
   acceptance: 'Retry does not skip blocks or leave an incorrect checkpoint.',
+  evidence: [
+    'log events rpc.retry (operation, code, attempt, delay), rpc.exhausted, scanner.recovered, provider.behind',
+    'scanner_checkpoints.scan_status (degraded, then ok); GET /status -> checkpoint.scanStatus',
+    'the delays the scanner asked for (recorded, not slept)',
+  ],
   requires: ['postgres'],
   sandbox: { seed: 'S05', traffic: 'random', confirmationDepth: 3, batchSize: 5, retry: { maxAttempts: 4, baseDelayMs: 100, maxDelayMs: 2_000 } },
   checks: [

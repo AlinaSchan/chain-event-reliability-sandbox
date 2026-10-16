@@ -149,6 +149,9 @@ const SPECS: Spec[] = [
   },
 ];
 
+/** The ids of every stored-state invariant, for documentation checks. */
+export const INVARIANT_IDS: readonly string[] = SPECS.map((s) => s.id);
+
 /**
  * Re-derives what the stored state must satisfy from the stored state itself, and reports every
  * violation. It reads only PostgreSQL. Tests run it after every scenario; GET /status can run it on demand.

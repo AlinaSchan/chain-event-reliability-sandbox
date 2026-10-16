@@ -30,6 +30,11 @@ export const s02: ScenarioDefinition = {
     'Every repeat sighting is recorded; replays change no logical effect.',
   ],
   acceptance: 'One logical effect and a correct audit trail.',
+  evidence: [
+    'chain_events.seen_count above 1 and event_audit rows with action duplicate_sighting (GET /events/:id -> audit)',
+    'log events writer.stale for the races a competing scanner lost',
+    'GET /events and GET /alerts: exactly one row per event identity',
+  ],
   requires: ['postgres'],
   sandbox: { seed: 'S02', traffic: 'scripted', confirmationDepth: 2, batchSize: 3 },
   checks: [

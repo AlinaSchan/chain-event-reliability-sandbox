@@ -25,6 +25,11 @@ export const s06: ScenarioDefinition = {
     'A provider that is ahead but unreachable does not confirm anything either.',
   ],
   acceptance: 'The status changes only when the configured depth is reached.',
+  evidence: [
+    'event_audit rows with action confirmed and details.blocksOnTop (GET /events/:id)',
+    'outbox rows appear only in the confirming transaction (GET /alerts -> notification is null while provisional)',
+    'the head-by-head status table printed by the demo',
+  ],
   requires: ['postgres'],
   sandbox: { seed: 'S06', traffic: 'scripted', confirmationDepth: 4, batchSize: 3 },
   checks: [

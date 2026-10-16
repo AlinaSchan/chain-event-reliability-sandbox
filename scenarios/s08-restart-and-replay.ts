@@ -21,6 +21,11 @@ export const s08: ScenarioDefinition = {
     'The final state is identical to the uninterrupted control run: same events, statuses, totals, alerts, notifications and blocks.',
   ],
   acceptance: 'All canonical events are recovered with no gaps and no duplicate effects.',
+  evidence: [
+    'recovery_log rows kind=resume with the checkpoint each restart used; log event scanner.resume',
+    'the fingerprint comparison with the uninterrupted control run (a declared check, not just a printout)',
+    'chain_events.seen_count = 1 for every event',
+  ],
   requires: ['postgres'],
   sandbox: { seed: 'S08', traffic: 'random', confirmationDepth: 3, batchSize: 4 },
   checks: [

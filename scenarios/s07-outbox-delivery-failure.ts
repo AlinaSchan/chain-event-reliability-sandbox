@@ -29,6 +29,11 @@ export const s07: ScenarioDefinition = {
     'Rows that were published but produced no effect are re-queued from PostgreSQL and delivered.',
   ],
   acceptance: 'Durable records restore delivery without repeating a logical effect.',
+  evidence: [
+    'outbox.status, last_error, publish_attempts, republish_count, duplicate_deliveries (GET /events/:id -> notifications)',
+    'recovery_log row kind=outbox_requeue; log events outbox.publish_failed, outbox.requeued',
+    'Redis stream length versus notification_sink row count',
+  ],
   requires: ['postgres', 'redis'],
   sandbox: { seed: 'S07', traffic: 'scripted', confirmationDepth: 2, batchSize: 5 },
   checks: [

@@ -31,6 +31,11 @@ export const s01: ScenarioDefinition = {
     'With no reconnect at all, the periodic poll alone brings the checkpoint to the head.',
   ],
   acceptance: 'Range backfill recovers all canonical events in the test range.',
+  evidence: [
+    'recovery_log row kind=backfill (blocks 10-29), also GET /status -> lastRecoveryAction',
+    'log events notifier.disconnected, notifier.connected, backfill.range',
+    'GET /status while disconnected: checkpoint vs fixtureChainHead, lagBlocks',
+  ],
   requires: ['postgres'],
   sandbox: { seed: 'S01', traffic: 'scripted', confirmationDepth: 3, batchSize: 5 },
   checks: [

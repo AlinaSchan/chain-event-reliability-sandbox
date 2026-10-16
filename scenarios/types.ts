@@ -32,6 +32,8 @@ export interface ScenarioDefinition {
   expected: string[];
   /** The acceptance criterion from the brief, verbatim in spirit. */
   acceptance: string;
+  /** Where an observer can see the problem and the recovery: tables, log events, API fields. */
+  evidence: string[];
   requires: Requirement[];
   sandbox: SandboxOptions;
   checks: DeclaredCheck[];

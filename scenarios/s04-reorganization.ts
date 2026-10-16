@@ -41,6 +41,12 @@ export const s04: ScenarioDefinition = {
     'Beyond the rollback limit the scanner halts with diagnostics and writes nothing.',
   ],
   acceptance: 'Orphaned events are no longer counted as canonical, and replacement events are processed.',
+  evidence: [
+    'recovery_log row kind=reorg (common ancestor, depth, orphaned counts); GET /status -> lastRecoveryAction',
+    'event_audit rows with action orphaned; chain_blocks.orphan_reason; GET /events/:id',
+    'incidents confirmed_event_orphaned and scanner_halted; scanner_checkpoints.status_detail with the probe list; GET /status -> openIncidents',
+    'log events reorg.detected, reorg.applied, scanner.halted',
+  ],
   requires: ['postgres'],
   sandbox: { seed: 'S04', traffic: 'scripted', confirmationDepth: 3, maxReorgDepth: 10, batchSize: 5 },
   checks: [

@@ -27,6 +27,7 @@ export interface ScenarioCatalogEntry {
   faults: string[];
   expected: string[];
   acceptance: string;
+  evidence: string[];
   requires: string[];
   checks: Array<{ id: string; description: string }>;
 }

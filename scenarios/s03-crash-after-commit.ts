@@ -28,6 +28,11 @@ export const s03: ScenarioDefinition = {
     'Nothing is delivered twice; nothing is left pending.',
   ],
   acceptance: 'A restart does not double the processing.',
+  evidence: [
+    'Redis XPENDING (unacknowledged count) next to the notification_sink row count at the moment of the crash',
+    'outbox.duplicate_deliveries and log event consumer.duplicate for the redelivered message',
+    'GET /events/:id -> notifications and deliveries: one delivery per notification',
+  ],
   requires: ['postgres', 'redis'],
   sandbox: { seed: 'S03', traffic: 'scripted', confirmationDepth: 2, batchSize: 5 },
   checks: [

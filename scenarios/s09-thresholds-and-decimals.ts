@@ -59,6 +59,11 @@ export const s09: ScenarioDefinition = {
     'Inexact or malformed thresholds are rejected before anything runs.',
   ],
   acceptance: 'Exact integer comparisons, no floating-point errors.',
+  evidence: [
+    'alerts.threshold_units per token (GET /alerts -> thresholdUnits, threshold)',
+    'the boundary table and the rejected-configurations table printed by the demo',
+    'account_flows totals beyond 2^53 and beyond uint256',
+  ],
   requires: ['postgres'],
   sandbox: { seed: 'S09', traffic: 'scripted', confirmationDepth: 2, batchSize: 8 },
   checks: [

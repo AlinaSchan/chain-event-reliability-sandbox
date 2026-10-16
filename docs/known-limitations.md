@@ -71,6 +71,9 @@ Stated plainly, so that review time goes to the things that matter. Nothing here
   so on that machine those tests are skipped and reported as skipped; the PostgreSQL-backed tests ran there against
   PostgreSQL 17 on Windows.
 - Mutation checks were manual (see `docs/reliability-invariants.md`).
-- The fault fuzzer uses 12 fixed seeds; it is a regression net, not an exhaustive search.
+- The fault fuzzer (12 seeds) and the flip-flop walks (16 seeds, each run plainly and again under chaos) use fixed
+  seeds. They are regression nets, not exhaustive searches, and not very sensitive: the retraction defect they now
+  guard against was caught by 1 of the 16 plain walks and 1 of the 16 chaos walks when it was put back. The
+  deterministic test for it is the primary guard.
 - A deadlock between the consumer and a reorg is prevented by lock ordering and covered by one deterministic
   interleaving test plus a 10-round randomized one; other interleavings were reasoned about, not enumerated.

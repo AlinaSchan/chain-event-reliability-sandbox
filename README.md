@@ -246,8 +246,10 @@ Defined in [migrations/](migrations/). Amounts are `numeric` base units; block n
 - orphaned events do not count as canonical, replacement events are processed, the correction is atomic and idempotent;
 - nothing is queued for a provisional event, and a notification for an event that is no longer confirmed is not delivered;
 - across reorganizations that flip back and forth, a retraction is queued only for a confirmation that was actually
-  delivered, for the same confirmation epoch: in 16 seeded random walks, a downstream system that only counts `+1` per
-  confirmation and `-1` per retraction ends up holding exactly the events that are live on the fixture's chain;
+  delivered, for the same confirmation epoch: in 16 seeded random walks - and the same 16 histories again under
+  injected provider faults, processes dying at exact lines, a second scanner racing the first and deliveries running
+  during reorganizations - a downstream system that only counts `+1` per confirmation and `-1` per retraction ends up
+  holding exactly the events that are live on the fixture's chain;
 - thresholds are compared as integers: the boundary one base unit either side is classified correctly for 0-, 2-, 6-
   and 18-decimal tokens, including values above 2^53.
 

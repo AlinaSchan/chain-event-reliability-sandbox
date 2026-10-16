@@ -1,0 +1,42 @@
+{
+  "name": "chain-event-reliability-sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic sandbox for studying missed events, duplicate delivery, checkpoint recovery, confirmations and reorganizations in EVM event monitoring.",
+  "author": "Logos (https://logos.co/)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "start": "tsx src/app/main.ts",
+    "demo": "tsx scripts/demo.ts",
+    "scenarios": "tsx scripts/run-scenarios.ts",
+    "ops": "tsx scripts/ops.ts",
+    "openapi": "tsx scripts/generate-openapi.ts",
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration"
+  },
+  "dependencies": {
+    "@fastify/swagger": "^9.9.2",
+    "fastify": "^5.12.7",
+    "ioredis": "^5.11.1",
+    "pg": "^8.23.1",
+    "pino": "^10.4.0",
+    "viem": "^2.57.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "eslint": "^10.12.0",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.5"
+  }
+}

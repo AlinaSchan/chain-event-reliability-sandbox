@@ -95,7 +95,7 @@ ${s.checks.map((c) => `| \`${c.id}\` | ${c.description} |`).join('\n')}
 - \`npm run scenarios -- --only ${s.id}\` - verdict and failed checks with expected vs actual
 - \`npm run demo -- --scenario ${s.id}\` - the same run, narrated${s.requires.includes('redis') ? '\n- needs `REDIS_URL` (see docker-compose.yml); without it this scenario is reported as skipped' : ''}
 - \`npx vitest run tests/fault-injection/scenarios.test.ts -t "${s.id}"\`
-- related focused tests: ${(RELATED_TESTS[s.id] ?? []).map((t) => `\`${t.split(' ')[0]}\`${t.includes(' (') ? ` ${t.slice(t.indexOf(' ('))}` : ''}`).join('; ')}`);
+- related focused tests: ${(RELATED_TESTS[s.id] ?? []).map((t) => `\`${t.split(' ')[0]}\`${t.includes(' (') ? t.slice(t.indexOf(' (')) : ''}`).join('; ')}`);
   }
   return `${out.join('\n')}\n`;
 }

@@ -84,7 +84,7 @@ The head-notification stream drops while blocks keep arriving. The notification 
 - `npm run scenarios -- --only S01` - verdict and failed checks with expected vs actual
 - `npm run demo -- --scenario S01` - the same run, narrated
 - `npx vitest run tests/fault-injection/scenarios.test.ts -t "S01"`
-- related focused tests: `tests/unit/fixture.test.ts`  (a notifier that drops heads never replays them); `tests/integration/ingestion.test.ts`  (restart and incremental scans)
+- related focused tests: `tests/unit/fixture.test.ts` (a notifier that drops heads never replays them); `tests/integration/ingestion.test.ts` (restart and incremental scans)
 
 ## S02 - Duplicate delivery
 
@@ -131,7 +131,7 @@ The same events reach the system many times over: the provider returns every log
 - `npm run scenarios -- --only S02` - verdict and failed checks with expected vs actual
 - `npm run demo -- --scenario S02` - the same run, narrated
 - `npx vitest run tests/fault-injection/scenarios.test.ts -t "S02"`
-- related focused tests: `tests/fault-injection/duplicates.test.ts`; `tests/fault-injection/concurrent-workers.test.ts`; `tests/unit/prepare-retry.test.ts`  (duplicate logs in one response)
+- related focused tests: `tests/fault-injection/duplicates.test.ts`; `tests/fault-injection/concurrent-workers.test.ts`; `tests/unit/prepare-retry.test.ts` (duplicate logs in one response)
 
 ## S03 - Crash after database commit, before Redis ACK
 
@@ -176,7 +176,7 @@ A consumer commits a notification's effect to PostgreSQL and dies before sending
 - `npm run demo -- --scenario S03` - the same run, narrated
 - needs `REDIS_URL` (see docker-compose.yml); without it this scenario is reported as skipped
 - `npx vitest run tests/fault-injection/scenarios.test.ts -t "S03"`
-- related focused tests: `tests/integration/outbox.test.ts`  (against the in-process queue double); `tests/fault-injection/hard-kill.test.ts`  (a consumer process killed with SIGKILL); `tests/integration/queue-contract.test.ts`  (real Redis)
+- related focused tests: `tests/integration/outbox.test.ts` (against the in-process queue double); `tests/fault-injection/hard-kill.test.ts` (a consumer process killed with SIGKILL); `tests/integration/queue-contract.test.ts` (real Redis)
 
 ## S04 - Chain reorganization
 
@@ -225,7 +225,7 @@ The tip of the chain is replaced by a competing branch. The scanner notices that
 - `npm run scenarios -- --only S04` - verdict and failed checks with expected vs actual
 - `npm run demo -- --scenario S04` - the same run, narrated
 - `npx vitest run tests/fault-injection/scenarios.test.ts -t "S04"`
-- related focused tests: `tests/integration/reorg.test.ts`; `tests/integration/outbox.test.ts`  (consumer/reorg interleaving); `tests/integration/api.test.ts`  (reorg visible through the API)
+- related focused tests: `tests/integration/reorg.test.ts`; `tests/integration/outbox.test.ts` (consumer/reorg interleaving); `tests/integration/api.test.ts` (reorg visible through the API)
 
 ## S05 - RPC timeouts and bad responses
 
@@ -272,7 +272,7 @@ The provider times out, errors for good, answers from a stale cache, lags behind
 - `npm run scenarios -- --only S05` - verdict and failed checks with expected vs actual
 - `npm run demo -- --scenario S05` - the same run, narrated
 - `npx vitest run tests/fault-injection/scenarios.test.ts -t "S05"`
-- related focused tests: `tests/fault-injection/rpc-faults.test.ts`  (including a 12-seed fault fuzzer); `tests/unit/prepare-retry.test.ts`
+- related focused tests: `tests/fault-injection/rpc-faults.test.ts` (including a 12-seed fault fuzzer); `tests/unit/prepare-retry.test.ts`
 
 ## S06 - Delayed confirmations
 
@@ -316,7 +316,7 @@ New events are provisional. They become confirmed only when the configured numbe
 - `npm run scenarios -- --only S06` - verdict and failed checks with expected vs actual
 - `npm run demo -- --scenario S06` - the same run, narrated
 - `npx vitest run tests/fault-injection/scenarios.test.ts -t "S06"`
-- related focused tests: `tests/integration/confirmations.test.ts`; `tests/unit/watchlist-lifecycle.test.ts`  (the depth rule)
+- related focused tests: `tests/integration/confirmations.test.ts`; `tests/unit/watchlist-lifecycle.test.ts` (the depth rule)
 
 ## S07 - Outbox delivery failure
 
@@ -408,7 +408,7 @@ The scanner process is killed in the middle of ingestion - once just before COMM
 - `npm run scenarios -- --only S08` - verdict and failed checks with expected vs actual
 - `npm run demo -- --scenario S08` - the same run, narrated
 - `npx vitest run tests/fault-injection/scenarios.test.ts -t "S08"`
-- related focused tests: `tests/integration/ingestion.test.ts`  (crash before and after COMMIT); `tests/fault-injection/hard-kill.test.ts`  (a scanner process killed with SIGKILL); `tests/integration/reorg.test.ts`  (crash during a reorg correction)
+- related focused tests: `tests/integration/ingestion.test.ts` (crash before and after COMMIT); `tests/fault-injection/hard-kill.test.ts` (a scanner process killed with SIGKILL); `tests/integration/reorg.test.ts` (crash during a reorg correction)
 
 ## S09 - Value thresholds and token decimals
 

@@ -31,7 +31,7 @@ export interface ScannerConfig {
   /** Deepest reorganization rolled back automatically. Anything deeper halts the scanner. */
   maxReorgDepth: number;
   retry: RetryPolicy;
-  /** Consecutive lost checkpoint races tolerated in one scan before giving the cycle up. */
+  /** Consecutive lost checkpoint races tolerated in one scan before giving the cycle up (the next cycle starts fresh). */
   maxStaleRetries: number;
   /** Safety valve on the number of steps in one scan. */
   maxStepsPerScan: number;
@@ -122,6 +122,8 @@ export class Scanner {
     const initial = await ensureCheckpoint(db, chainId, this.cfg.startBlock);
     report.fromBlock = initial.lastBlockNumber + 1;
     if (trigger === 'startup') await this.recordStart(initial);
+    let degradedAtStart = initial.scanStatus === 'degraded';
+    let staleStreak = 0; // lost checkpoint races in a row; any step that gets through resets it
 
     for (let i = 0; i < this.cfg.maxStepsPerScan; i++) {
       const cp = (await getCheckpoint(db, chainId)) ?? initial;
@@ -129,12 +131,14 @@ export class Scanner {
       report.steps += 1;
       try {
         const result = await this.step(cp, trigger, report);
-        if (result === 'advanced' || result === 'reorg_applied') continue;
-        if (result === 'halted') return this.finish(report, 'halted');
-        if (result === 'caught_up' && cp.scanStatus === 'degraded') {
+        staleStreak = 0;
+        if (result !== 'halted' && degradedAtStart) {
+          degradedAtStart = false;
           await setHealth(db, chainId, 'ok', null);
           logger.info({ event: 'scanner.recovered', chainId }, 'provider reachable again; scan status back to ok');
         }
+        if (result === 'advanced' || result === 'reorg_applied') continue;
+        if (result === 'halted') return this.finish(report, 'halted');
         return this.finish(report, result);
       } catch (err) {
         if (err instanceof StaleCheckpointError) {
@@ -144,7 +148,8 @@ export class Scanner {
             { event: 'writer.stale', chainId, expectedVersion: err.expectedVersion, actualVersion: err.actualVersion },
             'another writer moved the checkpoint first; starting over from stored state',
           );
-          if (report.staleWriterAborts > this.cfg.maxStaleRetries) return this.finish(report, 'stale_writer_limit');
+          staleStreak += 1;
+          if (staleStreak > this.cfg.maxStaleRetries) return this.finish(report, 'stale_writer_limit');
           continue;
         }
         if (err instanceof RpcExhaustedError || err instanceof RpcError) {

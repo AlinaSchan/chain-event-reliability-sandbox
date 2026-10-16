@@ -10,8 +10,9 @@ export type RpcMethod = 'getHead' | 'getHeader' | 'getLogs';
  * stale: the call returns the previous successful response for the same method and arguments
  *        (a repeated or cached RPC response that no longer matches the chain).
  * duplicate_logs: getLogs returns every log twice (overlapping or repeated delivery).
+ * lagging: getHead answers `lagBlocks` behind the real head (a node that has not caught up).
  */
-export type FaultAction = 'timeout' | 'server_error' | 'stale' | 'duplicate_logs';
+export type FaultAction = 'timeout' | 'server_error' | 'stale' | 'duplicate_logs' | 'lagging';
 
 export interface FaultRule {
   method: RpcMethod | '*';
@@ -20,6 +21,8 @@ export interface FaultRule {
   times: number;
   /** How many matching calls pass through untouched before the first fault. */
   skip?: number;
+  /** For `lagging`: how many blocks behind the real head the answer is. */
+  lagBlocks?: number;
 }
 
 interface RuleState extends FaultRule {
@@ -47,7 +50,7 @@ export class FaultPlan {
   }
 
   /** Consumes and returns the fault for this call, if any rule matches. */
-  take(method: RpcMethod): FaultAction | undefined {
+  take(method: RpcMethod): { action: FaultAction; lagBlocks: number } | undefined {
     for (const rule of this.rules) {
       if (rule.fired >= rule.times) continue;
       if (rule.method !== '*' && rule.method !== method) continue;
@@ -57,7 +60,7 @@ export class FaultPlan {
       }
       rule.fired += 1;
       this.fired.push({ seq: this.fired.length + 1, method, action: rule.action });
-      return rule.action;
+      return { action: rule.action, lagBlocks: rule.lagBlocks ?? 1 };
     }
     return undefined;
   }

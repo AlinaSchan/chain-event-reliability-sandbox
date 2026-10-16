@@ -8,6 +8,7 @@ export default defineConfig({
           name: 'unit',
           include: ['tests/unit/**/*.test.ts'],
           environment: 'node',
+          sequence: { groupOrder: 1 },
         },
       },
       {
@@ -15,6 +16,7 @@ export default defineConfig({
           name: 'integration',
           include: ['tests/integration/**/*.test.ts', 'tests/fault-injection/**/*.test.ts'],
           environment: 'node',
+          sequence: { groupOrder: 2 },
           globalSetup: ['tests/support/global-setup.ts'],
           testTimeout: 30_000,
           hookTimeout: 60_000,

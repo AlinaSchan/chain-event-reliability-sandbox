@@ -17,7 +17,16 @@ export class FixtureProvider implements ChainProvider {
   }
 
   getHead(): Promise<HeadRef> {
-    return this.call('getHead', '', () => this.chain.head);
+    return this.call(
+      'getHead',
+      '',
+      () => this.chain.head,
+      (lag) => {
+        const number = Math.max(0, this.chain.head.number - lag);
+        const header = this.chain.getHeaderByNumber(number);
+        return header ? { number, hash: header.hash } : this.chain.head;
+      },
+    );
   }
 
   getHeader(number: number): Promise<BlockHeader | null> {
@@ -30,11 +39,11 @@ export class FixtureProvider implements ChainProvider {
     );
   }
 
-  private call<T>(method: RpcMethod, key: string, produce: () => T): Promise<T> {
+  private call<T>(method: RpcMethod, key: string, produce: () => T, lagging?: (lagBlocks: number) => T): Promise<T> {
     this.calls[method] += 1;
     const cacheKey = `${method}:${key}`;
     const fault = this.faults.take(method);
-    switch (fault) {
+    switch (fault?.action) {
       case 'timeout':
         return Promise.reject(new RpcError('TIMEOUT', `${method} timed out (injected)`));
       case 'server_error':
@@ -48,6 +57,9 @@ export class FixtureProvider implements ChainProvider {
         if (Array.isArray(fresh)) return Promise.resolve([...fresh, ...fresh] as T);
         break;
       }
+      case 'lagging':
+        if (lagging) return Promise.resolve(lagging(fault?.lagBlocks ?? 1));
+        break;
       case undefined:
         break;
     }

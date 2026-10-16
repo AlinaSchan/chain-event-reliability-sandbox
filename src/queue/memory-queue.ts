@@ -8,6 +8,8 @@ interface Entry {
   deliveredAt: number;
   deliveries: number;
   acked: boolean;
+  /** Removed from the stream (like XDEL) - possibly while a consumer still holds it. Never handed out again. */
+  deleted: boolean;
 }
 
 /**
@@ -39,6 +41,7 @@ export class MemoryQueue implements StreamQueue {
         deliveredAt: 0,
         deliveries: 0,
         acked: false,
+        deleted: false,
       });
       return id;
     });
@@ -53,7 +56,7 @@ export class MemoryQueue implements StreamQueue {
   readPending(consumer: string, count: number): Promise<StreamMessage[]> {
     return this.guard(() =>
       this.entries
-        .filter((e) => !e.acked && e.owner === consumer)
+        .filter((e) => !e.acked && !e.deleted && e.owner === consumer)
         .slice(0, count)
         .map(toMessage),
     );
@@ -64,15 +67,16 @@ export class MemoryQueue implements StreamQueue {
       if (!this.groupExists) return [];
       const fresh = this.entries.slice(this.cursor, this.cursor + count);
       this.cursor += fresh.length;
-      for (const e of fresh) this.deliver(e, consumer);
-      return fresh.map(toMessage);
+      const live = fresh.filter((e) => !e.deleted);
+      for (const e of live) this.deliver(e, consumer);
+      return live.map(toMessage);
     });
   }
 
   claimStale(consumer: string, opts: { minIdleMs: number; count: number }): Promise<StreamMessage[]> {
     return this.guard(() => {
       const stale = this.entries
-        .filter((e) => !e.acked && e.owner !== null && e.owner !== consumer && this.now() - e.deliveredAt >= opts.minIdleMs)
+        .filter((e) => !e.acked && !e.deleted && e.owner !== null && e.owner !== consumer && this.now() - e.deliveredAt >= opts.minIdleMs)
         .slice(0, opts.count);
       for (const e of stale) this.deliver(e, consumer);
       return stale.map(toMessage);
@@ -88,14 +92,14 @@ export class MemoryQueue implements StreamQueue {
 
   pending(): Promise<PendingSummary> {
     return this.guard(() => {
-      const open = this.entries.filter((e) => !e.acked && e.owner !== null);
+      const open = this.entries.filter((e) => !e.acked && !e.deleted && e.owner !== null);
       const oldest = open[0];
       return { count: open.length, oldestIdleMs: oldest ? this.now() - oldest.deliveredAt : null };
     });
   }
 
   length(): Promise<number> {
-    return this.guard(() => this.entries.length);
+    return this.guard(() => this.entries.filter((e) => !e.deleted).length);
   }
 
   close(): Promise<void> {
@@ -106,7 +110,13 @@ export class MemoryQueue implements StreamQueue {
 
   /** Everything the broker holds, delivered or not (synchronous, for assertions). */
   get size(): number {
-    return this.entries.length;
+    return this.entries.filter((e) => !e.deleted).length;
+  }
+
+  /** The stream loses one message, e.g. XDEL or trimming, whether or not a consumer has been given it. */
+  deleteMessage(id: string): void {
+    const entry = this.entries.find((e) => e.id === id);
+    if (entry) entry.deleted = true;
   }
 
   /** The broker loses all data, group included (a restart without persistence). */

@@ -20,6 +20,8 @@ interface Harness {
   another(): StreamQueue;
   /** The broker loses the stream and its consumer group. */
   loseAllData(): Promise<void>;
+  /** One message disappears from the stream (XDEL, trimming) while consumers may still hold it. */
+  deleteMessage(id: string): Promise<void>;
   /** A queue that cannot reach its broker at all. */
   unreachable(): StreamQueue;
   cleanup(): Promise<void>;
@@ -33,6 +35,7 @@ function memoryHarness(): Harness {
     queue,
     another: () => queue, // one broker, shared state
     loseAllData: () => Promise.resolve(queue.flush()),
+    deleteMessage: (id) => Promise.resolve(queue.deleteMessage(id)),
     unreachable: () => {
       const q = new MemoryQueue();
       q.down = true;
@@ -62,6 +65,14 @@ function redisHarness(): Harness {
       const admin = new Redis(url, { maxRetriesPerRequest: 1 });
       try {
         await admin.del(`${prefix}:s`);
+      } finally {
+        admin.disconnect();
+      }
+    },
+    deleteMessage: async (id) => {
+      const admin = new Redis(url, { maxRetriesPerRequest: 1 });
+      try {
+        await admin.xdel(`${prefix}:s`, id);
       } finally {
         admin.disconnect();
       }
@@ -168,6 +179,31 @@ describe.each(IMPLEMENTATIONS)('StreamQueue contract - $name', ({ enabled, make 
       expect(claimed.map((m) => m.fields.notificationId)).toEqual(['n-1']);
       expect(await h.queue.readPending('A', 10)).toEqual([]); // no longer A's
       expect((await h.another().readPending('B', 10)).map((m) => m.fields.notificationId)).toEqual(['n-1']);
+    });
+
+    it('drops a message deleted from the stream while pending instead of letting it hide the live ones behind it', async () => {
+      await h.queue.ensureGroup();
+      for (let i = 1; i <= 4; i++) await h.queue.publish(msg(i));
+      const delivered = await h.queue.readNew('A', 10); // all four are pending for A
+      await h.deleteMessage(delivered[0]!.id);
+      await h.deleteMessage(delivered[1]!.id);
+
+      // The two oldest pending entries no longer exist. Asking for two must still reach the live ones.
+      expect((await h.queue.readPending('A', 2)).map((m) => m.fields.notificationId)).toEqual(['n-3', 'n-4']);
+      expect((await h.queue.pending()).count).toBe(2); // the dead entries are gone from the pending list
+      expect((await h.queue.readPending('A', 10)).map((m) => m.fields.notificationId)).toEqual(['n-3', 'n-4']);
+    });
+
+    it('does not hand a message that was deleted from the stream to the consumer that takes over', async () => {
+      await h.queue.ensureGroup();
+      await h.queue.publish(msg(1));
+      await h.queue.publish(msg(2));
+      const delivered = await h.queue.readNew('A', 10);
+      await h.deleteMessage(delivered[0]!.id);
+
+      const claimed = await h.another().claimStale('B', { minIdleMs: 0, count: 10 });
+      expect(claimed.map((m) => m.fields.notificationId)).toEqual(['n-2']);
+      expect((await h.queue.pending()).count).toBe(1);
     });
 
     it('survives the broker losing all of its data: the group is recreated and new messages flow', async () => {

@@ -14,17 +14,30 @@ export interface RedisStreamQueueOptions {
 /** Redis reply shape for entries: [[id, [field, value, field, value, ...]], ...]. A deleted entry has null fields. */
 type RawEntry = [string, string[] | null];
 
-function toMessages(entries: unknown): StreamMessage[] {
-  const out: StreamMessage[] = [];
+interface ParsedEntries {
+  messages: StreamMessage[];
+  /** Ids the broker still lists as pending although the entry no longer exists in the stream (XDEL, trimming). */
+  deleted: string[];
+}
+
+function parseEntries(entries: unknown): ParsedEntries {
+  const messages: StreamMessage[] = [];
+  const deleted: string[] = [];
   for (const entry of (entries ?? []) as RawEntry[]) {
     const [id, flat] = entry;
-    if (!flat) continue; // entry was deleted from the stream but is still in the pending list
+    if (!flat) {
+      deleted.push(id);
+      continue;
+    }
     const fields: Record<string, string> = {};
     for (let i = 0; i + 1 < flat.length; i += 2) fields[String(flat[i])] = String(flat[i + 1]);
-    out.push({ id, fields });
+    messages.push({ id, fields });
   }
-  return out;
+  return { messages, deleted };
 }
+
+/** Upper bound on consecutive reads that return nothing but deleted entries; the rest is cleaned on later calls. */
+const MAX_CLEANUP_PASSES = 50;
 
 const isNoGroup = (err: unknown): boolean => err instanceof Error && err.message.includes('NOGROUP');
 const isBusyGroup = (err: unknown): boolean => err instanceof Error && err.message.includes('BUSYGROUP');
@@ -107,12 +120,24 @@ export class RedisStreamQueue implements StreamQueue {
           'COUNT',
           opts.count,
         )) as unknown as [string, unknown];
-        return toMessages(reply[1]);
+        const { messages, deleted } = parseEntries(reply[1]);
+        await this.dropDeleted(deleted); // Redis 7 already removed these from the pending list; 6.2 returns them as nil
+        return messages;
       } catch (err) {
         if (isNoGroup(err)) return [];
         throw err;
       }
     });
+  }
+
+  /**
+   * An entry deleted from the stream while it was still pending can never be processed. Left in the pending
+   * list it would be returned first on every pass and, with enough of them, hide the live messages behind
+   * it. Acknowledging removes it. The outbox row is still `published`, so reconciliation re-queues the
+   * notification if it was lost.
+   */
+  private async dropDeleted(ids: string[]): Promise<void> {
+    if (ids.length > 0) await this.client.xack(this.opts.streamKey, this.opts.group, ...ids);
   }
 
   async ack(id: string): Promise<void> {
@@ -153,17 +178,24 @@ export class RedisStreamQueue implements StreamQueue {
   private async read(consumer: string, count: number, id: '0' | '>'): Promise<StreamMessage[]> {
     return this.run('XREADGROUP', async () => {
       try {
-        const reply = (await this.client.xreadgroup(
-          'GROUP',
-          this.opts.group,
-          consumer,
-          'COUNT',
-          count,
-          'STREAMS',
-          this.opts.streamKey,
-          id,
-        )) as unknown as Array<[string, unknown]> | null;
-        return reply?.[0] ? toMessages(reply[0][1]) : [];
+        // Reading the pending list can return nothing but deleted entries. Each pass removes them, so the next
+        // one reaches the live messages behind them.
+        for (let pass = 0; pass < MAX_CLEANUP_PASSES; pass++) {
+          const reply = (await this.client.xreadgroup(
+            'GROUP',
+            this.opts.group,
+            consumer,
+            'COUNT',
+            count,
+            'STREAMS',
+            this.opts.streamKey,
+            id,
+          )) as unknown as Array<[string, unknown]> | null;
+          const { messages, deleted } = parseEntries(reply?.[0]?.[1]);
+          await this.dropDeleted(deleted);
+          if (messages.length > 0 || deleted.length === 0) return messages;
+        }
+        return [];
       } catch (err) {
         // The broker lost the group (data loss / restart without persistence). Recreate it and report nothing read.
         if (isNoGroup(err)) {

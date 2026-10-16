@@ -69,6 +69,19 @@ jobs:
       - name: Failure scenarios S01-S09 (fails on any failed or skipped scenario)
         run: npm run scenarios
 
+      - name: Narrated runs of the two Redis scenarios (kept as artifacts)
+        run: |
+          mkdir -p demo-transcripts
+          npm run -s demo -- --scenario S03 > demo-transcripts/S03.txt
+          npm run -s demo -- --scenario S07 > demo-transcripts/S07.txt
+
+      - name: Upload demo transcripts
+        uses: actions/upload-artifact@v7
+        with:
+          name: demo-transcripts-node${{ matrix.node }}
+          path: demo-transcripts/
+          if-no-files-found: error
+
       - name: Service logs (on failure)
         if: failure()
         run: docker compose logs --no-color --tail=200

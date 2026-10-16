@@ -103,12 +103,21 @@ export class OutboxPublisher {
    */
   async requeueStale(): Promise<number> {
     const { db, logger, metrics } = this.deps;
+    // Rows another transaction holds (a consumer mid-delivery, a reorg, a publisher) are being handled, which is
+    // the opposite of abandoned: they are skipped rather than waited for and picked up on a later pass if they
+    // are still stale. Locking in id order with SKIP LOCKED means this job can never take part in a deadlock.
     const { rows } = await db.query<{ chain_id: number; notification_id: string }>(
-      `UPDATE outbox
-          SET status = 'pending', republish_count = republish_count + 1,
+      `WITH stale AS MATERIALIZED (
+         SELECT id FROM outbox
+          WHERE status = 'published' AND published_at < now() - make_interval(secs => $1::double precision / 1000)
+          ORDER BY id FOR UPDATE SKIP LOCKED
+       )
+       UPDATE outbox o
+          SET status = 'pending', republish_count = o.republish_count + 1,
               status_reason = 'requeued: published but no effect was recorded in time'
-        WHERE status = 'published' AND published_at < now() - make_interval(secs => $1::double precision / 1000)
-        RETURNING chain_id, notification_id`,
+         FROM stale s
+        WHERE o.id = s.id
+        RETURNING o.chain_id, o.notification_id`,
       [this.cfg.republishAfterMs],
     );
     if (rows.length === 0) return 0;

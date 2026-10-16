@@ -132,12 +132,16 @@ const SPECS: Spec[] = [
                  IS DISTINCT FROM e.status`,
   },
   {
-    id: 'I10.delivered-then-orphaned-has-retraction',
-    description: 'A confirmation that was delivered for an event that is now orphaned has a retraction queued.',
+    id: 'I10.superseded-confirmation-has-retraction',
+    description:
+      'A delivered confirmation that no longer describes its event (the event was orphaned, or has been confirmed again in a later epoch) has a retraction of the same epoch queued.',
     params: (c) => [c.chainId],
+    // Notification ids are "<event id>#<type>#<epoch>"; the third part is the epoch.
     sql: `SELECT count(*)::int AS n FROM notification_sink s JOIN chain_events e ON e.event_id = s.event_id
-           WHERE s.chain_id = $1 AND s.notification_type = 'event_confirmed' AND e.status = 'orphaned'
-             AND NOT EXISTS (SELECT 1 FROM outbox r WHERE r.event_id = s.event_id AND r.notification_type = 'event_retracted')`,
+           WHERE s.chain_id = $1 AND s.notification_type = 'event_confirmed'
+             AND NOT (e.status = 'confirmed' AND split_part(s.notification_id, '#', 3) = e.confirm_count::text)
+             AND NOT EXISTS (SELECT 1 FROM outbox r
+                              WHERE r.notification_id = s.event_id || '#event_retracted#' || split_part(s.notification_id, '#', 3))`,
   },
   {
     id: 'I11.halt-has-open-incident',
@@ -146,6 +150,15 @@ const SPECS: Spec[] = [
     sql: `SELECT count(*)::int AS n FROM scanner_checkpoints cp
            WHERE cp.chain_id = $1 AND cp.scan_status = 'halted'
              AND NOT EXISTS (SELECT 1 FROM incidents i WHERE i.chain_id = cp.chain_id AND i.kind = 'scanner_halted' AND i.status = 'open')`,
+  },
+  {
+    id: 'I12.retraction-follows-delivered-confirmation',
+    description: 'Every retraction answers a confirmation of the same epoch that was actually delivered; downstream is never told to undo what it was not told.',
+    params: (c) => [c.chainId],
+    sql: `SELECT count(*)::int AS n FROM outbox r
+           WHERE r.chain_id = $1 AND r.notification_type = 'event_retracted'
+             AND NOT EXISTS (SELECT 1 FROM notification_sink s
+                              WHERE s.notification_id = r.event_id || '#event_confirmed#' || split_part(r.notification_id, '#', 3))`,
   },
 ];
 

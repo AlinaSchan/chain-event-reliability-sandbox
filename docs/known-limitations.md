@@ -37,6 +37,13 @@ Stated plainly, so that review time goes to the things that matter. Nothing here
 - **The sink is a table, not a webhook.** It models a downstream system that deduplicates on the notification id. A
   real HTTP receiver would need that idempotency key and its own retry semantics; this project does not call any
   external endpoint.
+- **The publisher holds row locks while it talks to Redis.** `publishPending` locks a batch of outbox rows
+  (`FOR UPDATE SKIP LOCKED`) and keeps them locked across the `XADD` calls. A reorganization that has to suppress
+  one of those rows waits for the publisher, and it waits while holding the checkpoint lock, so ingestion pauses for
+  that long. The wait ends at `lock_timeout` (15 s) at the latest; then the reorganization's transaction fails as a
+  whole, the worker logs `worker.cycle_failed` and the next cycle retries. The cost is delay, not a wrong result.
+  Claiming rows under a lease and publishing outside the transaction would remove it, at the price of another row
+  state.
 - **The Redis stream is never trimmed.** Acknowledged entries accumulate. A deployment would trim by minimum id.
 - **Redis restart is simulated, not performed.** Tests delete the stream and its consumer group (what a restart without
   persistence does to this application) and kill worker processes with SIGKILL. Restarting a Redis container

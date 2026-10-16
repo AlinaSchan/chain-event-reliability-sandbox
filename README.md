@@ -4,8 +4,8 @@
 
 A deterministic sandbox for studying how an EVM event monitor stays correct when things go wrong: head
 notifications are lost, events arrive twice, the RPC times out, a worker dies mid-write, Redis redelivers, blocks
-are reorganized. It runs locally against PostgreSQL and Redis, needs no network and no paid API, and every claim
-below is backed by a test or an executable scenario you can run yourself.
+are reorganized. It runs locally against PostgreSQL and Redis, makes no outbound network calls at runtime, needs no
+paid API, and every claim below is backed by a test or an executable scenario you can run yourself.
 
 It is an **independent demonstration repository** used to discuss scope. It is not a production backend, it is
 not the code of any company or client, and it contains only synthetic data: no keys, no wallets, no live RPC, no
@@ -239,11 +239,14 @@ Defined in [migrations/](migrations/). Amounts are `numeric` base units; block n
 - the checkpoint never points beyond committed data - crash before COMMIT leaves the old state, crash after keeps the
   new one (in-process failpoints *and* a worker process killed with SIGKILL);
 - after any listed failure, the stored canonical events equal the fixture's own record of what it emitted (an
-  oracle independent of the scanner and decoder), derived totals equal an independent fold, and the eleven
+  oracle independent of the scanner and decoder), derived totals equal an independent fold, and the twelve
   stored-state invariants hold;
 - a repeated delivery of the same log, block range or notification has no second logical effect;
 - orphaned events do not count as canonical, replacement events are processed, the correction is atomic and idempotent;
 - nothing is queued for a provisional event, and a notification for an event that is no longer confirmed is not delivered;
+- across reorganizations that flip back and forth, a retraction is queued only for a confirmation that was actually
+  delivered, for the same confirmation epoch: in 16 seeded random walks, a downstream system that only counts `+1` per
+  confirmation and `-1` per retraction ends up holding exactly the events that are live on the fixture's chain;
 - thresholds are compared as integers: the boundary one base unit either side is classified correctly for 0-, 2-, 6-
   and 18-decimal tokens, including values above 2^53.
 

@@ -115,24 +115,41 @@ export async function orphanCanonicalAbove(tx: Tx, input: OrphanInput): Promise<
     [eventIds, reason],
   );
 
-  // Notifications that were delivered before we learned the event is gone need a correction. Do this
-  // before suppressing, while their status is still readable.
-  const delivered = await tx.query<{ event_id: string }>(
-    `SELECT DISTINCT event_id FROM outbox
-      WHERE event_id = ANY($1::text[]) AND notification_type = 'event_confirmed' AND status = 'processed'`,
-    [eventIds],
-  );
-  const deliveredIds = new Set(delivered.rows.map((r) => r.event_id));
+  // A retraction answers one specific delivery: the confirmation for the epoch the event is in right now.
+  // Earlier epochs were retracted when the event was orphaned the first time, and an epoch whose confirmation
+  // never went out needs no retraction (its pending notification is suppressed below). Read this before
+  // suppressing, while the statuses are still readable.
+  const confirmedEvents = events.filter((e) => e.old_status === 'confirmed');
+  const confirmationOf = new Map(confirmedEvents.map((e) => [notificationIdOf(e.event_id, 'event_confirmed', e.confirm_count), e.event_id]));
+  const deliveredIds = new Set<string>();
+  if (confirmationOf.size > 0) {
+    const { rows } = await tx.query<{ notification_id: string }>(
+      `SELECT notification_id FROM outbox WHERE notification_id = ANY($1::text[]) AND status = 'processed'`,
+      [[...confirmationOf.keys()]],
+    );
+    for (const row of rows) {
+      const eventId = confirmationOf.get(row.notification_id);
+      if (eventId !== undefined) deliveredIds.add(eventId);
+    }
+  }
 
+  // The rows are locked in id order, as the publisher and the re-queue job lock theirs, so two statements that
+  // overlap on several rows cannot each end up holding a row the other is waiting for.
   const suppressed = await tx.query(
-    `UPDATE outbox
+    `WITH victims AS MATERIALIZED (
+       SELECT id FROM outbox
+        WHERE event_id = ANY($1::text[]) AND notification_type = 'event_confirmed' AND status IN ('pending', 'published')
+        ORDER BY id FOR UPDATE
+     )
+     UPDATE outbox o
         SET status = 'suppressed', status_reason = 'event orphaned before delivery', processed_at = now()
-      WHERE event_id = ANY($1::text[]) AND notification_type = 'event_confirmed' AND status IN ('pending', 'published')`,
+       FROM victims v
+      WHERE o.id = v.id`,
     [eventIds],
   );
 
-  const retractions = events
-    .filter((e) => e.old_status === 'confirmed' && deliveredIds.has(e.event_id))
+  const retractions = confirmedEvents
+    .filter((e) => deliveredIds.has(e.event_id))
     .map((e) => {
       const notificationId = notificationIdOf(e.event_id, 'event_retracted', e.confirm_count);
       return {
@@ -179,20 +196,19 @@ export async function orphanCanonicalAbove(tx: Tx, input: OrphanInput): Promise<
   }));
   await insertAudit(tx, chainId, audit);
 
-  const confirmed = events.filter((e) => e.old_status === 'confirmed');
   let incidentId: number | null = null;
-  if (confirmed.length > 0) {
+  if (confirmedEvents.length > 0) {
     incidentId = await openIncident(tx, chainId, {
       kind: 'confirmed_event_orphaned',
       severity: 'critical',
       requiresManualReview: true,
       summary:
-        `${confirmed.length} event(s) that had already reached the confirmation depth were orphaned by a reorganization ` +
+        `${confirmedEvents.length} event(s) that had already reached the confirmation depth were orphaned by a reorganization ` +
         `above block ${ancestor.number}. ${deliveredIds.size} had been delivered downstream. Automatic recovery corrected ` +
         `this service's state but cannot undo effects outside it.`,
       details: {
         commonAncestor: ancestor,
-        confirmedEventIds: confirmed.map((e) => e.event_id),
+        confirmedEventIds: confirmedEvents.map((e) => e.event_id),
         deliveredEventIds: [...deliveredIds],
         retractionNotificationIds: retractions.map((r) => r.notificationId),
       },
@@ -202,8 +218,8 @@ export async function orphanCanonicalAbove(tx: Tx, input: OrphanInput): Promise<
   return {
     blocks,
     events: events.length,
-    fromProvisional: events.length - confirmed.length,
-    fromConfirmed: confirmed.length,
+    fromProvisional: events.length - confirmedEvents.length,
+    fromConfirmed: confirmedEvents.length,
     alertsWithdrawn: alerts.rowCount ?? 0,
     outboxSuppressed: suppressed.rowCount ?? 0,
     retractionsQueued: retractions.length,

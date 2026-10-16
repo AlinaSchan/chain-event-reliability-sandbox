@@ -219,6 +219,30 @@ describe('duplicate and lost messages', () => {
     await sb.consumer(queue).processBatch();
     expect(await sb.publisher(queue, { republishAfterMs: 0 }).requeueStale()).toBe(0); // processed: never re-queued
   });
+
+  it('does not wait for, or take, a stale-looking row that another transaction is handling at that moment', async () => {
+    const sb = await confirmedSandbox();
+    const queue = sb.memoryQueue();
+    await sb.publisher(queue).publishPending(); // both rows are `published`
+    const requeuer = sb.publisher(queue, { republishAfterMs: 0 });
+
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let acquired!: () => void;
+    const lockHeld = new Promise<void>((resolve) => (acquired = resolve));
+    const holder = sb.db.tx(async (tx) => {
+      await tx.query("SELECT id FROM outbox WHERE status = 'published' ORDER BY id LIMIT 1 FOR UPDATE");
+      acquired();
+      await released; // the row stays locked until the test lets go
+    });
+    await lockHeld;
+
+    expect(await requeuer.requeueStale()).toBe(1); // the free row only; the locked one is neither waited for nor touched
+    release();
+    await holder;
+    expect(await requeuer.requeueStale()).toBe(1); // picked up on the next pass, once nobody holds it
+    expect((await sb.outbox()).map((o) => [o.status, o.republished])).toEqual([['pending', 1], ['pending', 1]]);
+  });
 });
 
 describe('notifications follow the event, not just the message', () => {
@@ -273,6 +297,84 @@ describe('notifications follow the event, not just the message', () => {
     );
     expect(rows).toHaveLength(2);
     expect(rows.every((r) => r.event_status_at_delivery === 'orphaned' && /no longer on the provider's canonical chain/.test(r.payload.retractionReason))).toBe(true);
+    expect((await sb.invariants()).ok).toBe(true);
+  });
+});
+
+describe('a retraction answers the confirmation that was actually delivered', () => {
+  /** "event_confirmed#2: suppressed" - the epoch is the part of the notification id after the last "#". */
+  const ledger = async (sb: Sandbox): Promise<string[]> =>
+    (await sb.outbox()).map((o) => `${o.type}#${o.notificationId.split('#').pop()}: ${o.status}`);
+
+  it('a chain that flip-flops retracts each delivered epoch once, and never a confirmation that was not delivered', async () => {
+    const sb = await Sandbox.create({ confirmationDepth: 2, batchSize: 10 });
+    sandboxes.push(sb);
+    minePlan(sb.chain, { 3: block(tx(HIGH_A)) }, 5);
+    const tipA = sb.chain.head;
+    const queue = sb.memoryQueue();
+    const publisher = sb.publisher(queue);
+    const consumer = sb.consumer(queue);
+    const deliver = async () => {
+      await publisher.publishPending();
+      await consumer.processBatch();
+    };
+
+    await sb.scanner.scanOnce('startup'); // the event is confirmed (epoch 1) ...
+    await deliver(); //                      ... and the confirmation goes out
+    sb.chain.reorg({ depth: 3, replacement: 3, branch: 'B' });
+    await sb.scanner.scanOnce('poll'); //    the chain abandons it: retraction of epoch 1 is queued
+    await deliver();
+
+    sb.chain.setCanonicalTip(tipA.hash);
+    await sb.scanner.scanOnce('poll'); //    it comes back and is confirmed again (epoch 2); nothing is delivered yet
+    sb.chain.reorg({ depth: 3, replacement: 3, branch: 'C' });
+    await sb.scanner.scanOnce('poll'); //    ... and is abandoned again before epoch 2 ever went out
+    await deliver();
+
+    // Downstream was told about epoch 1 and then that epoch 1 was wrong. It was never told about epoch 2, so it
+    // must not be told that epoch 2 was wrong: a counting consumer would end at -1.
+    expect(await ledger(sb)).toEqual(['event_confirmed#1: processed', 'event_retracted#1: processed', 'event_confirmed#2: suppressed']);
+    expect((await sb.invariants()).ok).toBe(true);
+
+    sb.chain.setCanonicalTip(tipA.hash);
+    await sb.scanner.scanOnce('poll'); //    epoch 3 is confirmed and, this time, delivered
+    await deliver();
+    sb.chain.reorg({ depth: 3, replacement: 3, branch: 'D' });
+    await sb.scanner.scanOnce('poll'); //    and it is abandoned once more: now a retraction is owed, for epoch 3
+    await deliver();
+
+    expect(await ledger(sb)).toEqual([
+      'event_confirmed#1: processed',
+      'event_retracted#1: processed',
+      'event_confirmed#2: suppressed',
+      'event_confirmed#3: processed',
+      'event_retracted#3: processed',
+    ]);
+    expect(await sb.sinkCount()).toBe(4); // +1 -1 +1 -1: downstream ends with nothing, which is the truth
+    expect((await sb.invariants()).ok).toBe(true);
+  });
+
+  it('still delivers the retraction of an earlier epoch after the event has come back and been confirmed again', async () => {
+    const sb = await Sandbox.create({ confirmationDepth: 2, batchSize: 10 });
+    sandboxes.push(sb);
+    minePlan(sb.chain, { 3: block(tx(HIGH_A)) }, 5);
+    const tipA = sb.chain.head;
+    const queue = sb.memoryQueue();
+    const deliver = async () => {
+      await sb.publisher(queue).publishPending();
+      await sb.consumer(queue).processBatch();
+    };
+
+    await sb.scanner.scanOnce('startup');
+    await deliver(); // epoch 1 delivered
+    sb.chain.reorg({ depth: 3, replacement: 3, branch: 'B' });
+    await sb.scanner.scanOnce('poll'); // retraction of epoch 1 queued, not delivered yet
+    sb.chain.setCanonicalTip(tipA.hash);
+    await sb.scanner.scanOnce('poll'); // back again before anything else was delivered: epoch 2 queued
+    await deliver();
+
+    // Delivered in this order downstream sees +1 (epoch 1), -1 (its retraction), +1 (epoch 2): the event is live.
+    expect(await ledger(sb)).toEqual(['event_confirmed#1: processed', 'event_retracted#1: processed', 'event_confirmed#2: processed']);
     expect((await sb.invariants()).ok).toBe(true);
   });
 });

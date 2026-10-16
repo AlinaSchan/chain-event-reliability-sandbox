@@ -50,10 +50,12 @@ The demo output is the real run; its last lines are the scenario's own verdict.
 - **I1 / I2**: the checkpoint is the canonical tip and the canonical chain is linked without gaps.
 - **I5**: `account_flows` equals a recomputation from non-orphaned events (this is the check that catches any
   double application or missed reversal).
-- **I10**: a confirmation that was delivered for an event that is now orphaned always has a retraction queued.
+- **I10 / I12**: a delivered confirmation that no longer describes its event always has a retraction of the same
+  epoch queued (I10), and no retraction exists for a confirmation that was never delivered (I12). The pair is what
+  keeps a downstream system that only counts `+1` / `-1` correct across flip-flopping reorganizations.
 - D9: the consumer's shared lock on the event versus a concurrent reorg.
 
-`GET /status?verify=true` runs all eleven on whatever database the service is using.
+`GET /status?verify=true` runs all twelve on whatever database the service is using.
 
 ## Reproducing the important failures
 

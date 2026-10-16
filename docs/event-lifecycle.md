@@ -84,8 +84,10 @@ own state (and does so atomically), but it **cannot undo effects outside itself*
 1. An incident `confirmed_event_orphaned` (severity `critical`, `requires_manual_review = true`) is opened,
    listing the confirmed events and which of them had already been delivered.
 2. Notifications for those events that had not been delivered are marked `suppressed`.
-3. For notifications that *had* been delivered, an `event_retracted` notification is queued (same outbox, same
-   delivery guarantees). Whether a retraction is enough is a business decision; hence the incident.
+3. For a confirmation that *had* been delivered, an `event_retracted` notification of the same epoch is queued (same
+   outbox, same delivery guarantees). A retraction answers exactly one delivered confirmation: an epoch whose
+   confirmation never went out has nothing to retract (it is suppressed instead), and an earlier epoch was retracted
+   when it ended. Whether a retraction is enough is a business decision; hence the incident.
 4. `GET /status` shows `openIncidents` and the last recovery action; the Prometheus gauge
    `cers_incidents_requiring_manual_review` is non-zero.
 
@@ -96,7 +98,9 @@ nothing, records the probes it made in `scanner_checkpoints.status_detail`, and 
 ## Reorganization procedure
 
 1. A step finds that the stored tip is not the provider's block at that height, or that the next block's parent hash
-   does not match the stored tip.
+   does not match the stored tip. A provider head *below* the stored tip is not evidence by itself (a lagging node, a
+   stale cache): it counts only if the provider's hash at its own height differs from the stored one. A head below
+   `startBlock` has nothing stored to be compared with and is treated as a provider that is behind.
 2. Walk down from `min(stored tip, provider head)` comparing stored and provider hashes until they agree: the common
    ancestor. Stop at `MAX_REORG_DEPTH` or at the start block -> halt.
 3. Fetch the replacement branch (one batch), verify it attaches to the ancestor.

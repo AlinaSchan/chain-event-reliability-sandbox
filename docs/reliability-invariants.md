@@ -20,8 +20,9 @@ how the state got there, so they are a check on the whole pipeline, not on one f
 | `I7.no-notification-queued-before-confirmation` | No confirmation notification exists for an event that never reached `confirmed`. |
 | `I8.sink-matches-outbox` | Every processed outbox row has a sink delivery, and every sink delivery belongs to a processed row. |
 | `I9.audit-trail-ends-in-current-status` | Each event's latest audit row ends in the status the event currently has. |
-| `I10.delivered-then-orphaned-has-retraction` | A confirmation delivered for an event that is now orphaned has a retraction queued. |
+| `I10.superseded-confirmation-has-retraction` | A delivered confirmation that no longer describes its event (the event was orphaned, or has been confirmed again in a later epoch) has a retraction of the same epoch queued. |
 | `I11.halt-has-open-incident` | A halted scanner always has an open incident explaining why. |
+| `I12.retraction-follows-delivered-confirmation` | Every retraction answers a confirmation of the same epoch that was actually delivered; downstream is never told to undo what it was not told. |
 
 What the checker **cannot** see: an event that should be in the database and is not. Missing data leaves the state
 internally consistent. That is what range replay is for (`Scanner.replayRange`): it re-reads a range from the
@@ -40,7 +41,7 @@ both halves: the invariants hold with an event missing, and the replay finds and
 | D6 | **No provider answer is used unless it is internally consistent.** Logs must match the headers' block hashes; transactions must belong to their block; headers must link. | `prepareBlocks` (`src/ingestion/prepare.ts`) | `tests/unit/prepare-retry.test.ts`; S05 |
 | D7 | **Confirmation depth is measured from the checkpoint,** and confirmation is the only way a notification is created. Nothing is queued for a provisional event. | `confirmEligible` (`src/confirmation/confirm.ts`) | S06; invariant I7; `tests/integration/outbox.test.ts` ("never queues anything for an event that is still provisional") |
 | D8 | **Redis is not a source of truth.** Delivery state lives in `outbox`; the consumer commits its effect before acknowledging; rows that were published but never took effect are re-queued. | `NotificationConsumer`, `OutboxPublisher` | S03; S07; `tests/integration/queue-contract.test.ts` (real Redis) |
-| D9 | **Lock order is events -> outbox,** and the consumer holds a shared lock on the event while deciding, so a reorg cannot slip between its check and its commit. | `NotificationConsumer.applyEffect`, `orphanCanonicalAbove`, `confirmEligible` | `tests/integration/outbox.test.ts` (deterministic interleaving; removing the shared lock makes it fail) |
+| D9 | **Lock order is events -> outbox, and by id within the outbox.** The consumer holds a shared lock on the event while deciding, so a reorg cannot slip between its check and its commit; the statements that update several outbox rows lock them in id order, and the re-queue job skips rows another transaction holds. | `NotificationConsumer.applyEffect`, `orphanCanonicalAbove`, `confirmEligible`, `OutboxPublisher.requeueStale` | `tests/integration/outbox.test.ts` (deterministic interleaving; removing the shared lock makes it fail; re-queue skips a locked row). Deadlock freedom is by construction and by reasoning, not enumerated |
 | D10 | **The scanner halts rather than guess.** No common ancestor within `MAX_REORG_DEPTH` -> no writes, diagnostics stored, incident opened. | `Scanner.findCommonAncestor`, `Scanner.halt` | `tests/integration/reorg.test.ts`; S04 |
 | D11 | **Every correction is on the record.** `event_audit`, `recovery_log` and `incidents` are append-only in the code paths here; blocks and events are flagged, never deleted. | `src/storage/audit.ts`, `orphanCanonicalAbove` | S04 (`audit-record-created`, `deep-reorg-flags-manual-review`) |
 | D12 | **Amounts are never floating point.** bigint end to end; `numeric` in the database; thresholds parsed as exact decimals and rejected if they would need rounding. | `src/domain/units.ts`, `watchlist.ts`, migrations | S09; `tests/unit/units.test.ts` |
@@ -51,5 +52,9 @@ A test that cannot fail proves nothing. Besides running the suites, key behavior
 breaking the code and confirming the right tests fail (derived-state reversal removed -> 8 reorg tests fail;
 confirmation boundary `<=` -> `<` -> 5 fail; same-height tip check removed -> exactly the same-height test fails;
 duplicate detection in the consumer removed -> 6 outbox tests fail; shared event lock removed from the consumer ->
-the deterministic interleaving test fails). These were manual mutation checks; there is no mutation-testing job
-in CI.
+the deterministic interleaving test fails; retraction decided on "any epoch was delivered" instead of the event's
+current epoch -> the flip-flop outbox test fails, as does one of the 16 random flip-flop walks; the Redis adapter
+no longer acknowledging entries deleted while pending, or no longer reading on after a pass that returned only
+such entries -> two adapter unit tests fail in each case; the re-queue job waiting for locked rows instead of
+skipping them -> its test fails on `lock_timeout`). These were manual mutation checks; there is no mutation-testing
+job in CI.

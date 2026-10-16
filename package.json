@@ -4,6 +4,7 @@
   "private": true,
   "description": "Deterministic sandbox for studying missed events, duplicate delivery, checkpoint recovery, confirmations and reorganizations in EVM event monitoring.",
   "author": "Logos (https://logos.co/)",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22.12"

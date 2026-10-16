@@ -67,7 +67,3 @@ Stated plainly, so that review time goes to the things that matter. Nothing here
 - The fault fuzzer uses 12 fixed seeds; it is a regression net, not an exhaustive search.
 - A deadlock between the consumer and a reorg is prevented by lock ordering and covered by one deterministic
   interleaving test plus a 10-round randomized one; other interleavings were reasoned about, not enumerated.
-
-## Not yet decided
-
-- **Licence.** No licence file has been added. Until the owner chooses one, the repository is shared for review only.

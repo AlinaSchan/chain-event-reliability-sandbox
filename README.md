@@ -305,5 +305,4 @@ compensation status). The fee has not been agreed; final terms are subject to wr
 
 ## License
 
-No license has been chosen yet, so no license file is included; until the owner adds one the code is shared for review
-only. Author and publisher: Logos (https://logos.co/).
+MIT - Copyright (c) 2026 Logos (https://logos.co/). See [LICENSE](LICENSE).

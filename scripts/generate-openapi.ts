@@ -27,7 +27,7 @@ export async function generateOpenApi(): Promise<string> {
     watch: buildWatchIndex(FIXTURE_WATCHLIST),
     logger: silentLogger(),
     metrics: new Metrics(),
-    provider: { chainId: 31337, getHead: () => stub.query(), getHeader: () => stub.query(), getLogs: () => stub.query() } as never,
+    provider: { chainId: 31337, getHead: () => stub.query(), getHeader: () => stub.query(), getLogs: () => stub.query() },
     worker: null,
     pipeline: null,
     queue: null,
